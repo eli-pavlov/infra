@@ -1,36 +1,76 @@
-# This is a basic workflow to help you get started with Actions
-
-name: CI
-
-# Controls when the workflow will run
+name: infra
 on:
-  # Triggers the workflow on push or pull request events but only for the "master" branch
-  push:
-    branches: [ "master" ]
   pull_request:
-    branches: [ "master" ]
+    paths: [ 'envs/**', 'modules/**', '.github/workflows/infra.yml' ]
+  push:
+    branches: [ main ]
+    paths: [ 'envs/**', 'modules/**', '.github/workflows/infra.yml' ]
+  workflow_dispatch: {}
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+env:
+  TF_IN_AUTOMATION: true
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  plan:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
-
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        working-directory: envs/newsapp
+        run: terraform init -backend-config=backend.hcl || terraform init
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+      - name: Terraform Validate & Plan
+        working-directory: envs/newsapp
+        env:
+          TF_VAR_tenancy_ocid:    ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:       ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:     ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_pem: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_ssh_public_key:  ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_region:                     ${{ vars.OCI_REGION || 'il-jerusalem-1' }}
+          TF_VAR_vcn_display_name:           ${{ vars.VCN_DISPLAY_NAME || 'vcn-20230527-1933' }}
+          TF_VAR_subnet_display_name:        ${{ vars.SUBNET_DISPLAY_NAME || 'subnet-20230527-1933' }}
+          TF_VAR_availability_domain_number: ${{ vars.AVAILABILITY_DOMAIN_NUMBER || 1 }}
+          TF_VAR_fault_domain:               ${{ vars.FAULT_DOMAIN || 'FAULT-DOMAIN-3' }}
+          TF_VAR_instances:                  ${{ vars.NODE_COUNT || 4 }}
+          TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
+          TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
+          TF_VAR_ubuntu_image_display_name:  ${{ vars.UBUNTU_IMAGE || 'Canonical-Ubuntu-24.04-Minimal-aarch64-2025.05.20-0' }}
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          terraform fmt -check
+          terraform validate
+          terraform plan -input=false -out=plan.out
+
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        working-directory: envs/newsapp
+        run: terraform init -backend-config=backend.hcl || terraform init
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+      - name: Terraform Apply
+        working-directory: envs/newsapp
+        env:
+          TF_VAR_tenancy_ocid:    ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:       ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:     ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_pem: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_ssh_public_key:  ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_region:                     ${{ vars.OCI_REGION || 'il-jerusalem-1' }}
+          TF_VAR_vcn_display_name:           ${{ vars.VCN_DISPLAY_NAME || 'vcn-20230527-1933' }}
+          TF_VAR_subnet_display_name:        ${{ vars.SUBNET_DISPLAY_NAME || 'subnet-20230527-1933' }}
+          TF_VAR_availability_domain_number: ${{ vars.availability_domain_number || 1 }}
+          TF_VAR_fault_domain:               ${{ vars.FAULT_DOMAIN || 'FAULT-DOMAIN-3' }}
+          TF_VAR_instances:                  ${{ vars.NODE_COUNT || 4 }}
+          TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
+          TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
+          TF_VAR_ubuntu_image_display_name:  ${{ vars.UBUNTU_IMAGE || 'Canonical-Ubuntu-24.04-Minimal-aarch64-2025.05.20-0' }}
+        run: terraform apply -input=false -auto-approve
