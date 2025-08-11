@@ -1,9 +1,3 @@
-variable "region"                     { type = string, default = "il-jerusalem-1" }
-variable "vcn_display_name"           { type = string, default = "vcn-20230527-1933" }
-variable "subnet_display_name"        { type = string, default = "subnet-20230527-1933" }
-variable "availability_domain_number" { type = number, default = 1 }
-variable "fault_domain"               { type = string, default = "FAULT-DOMAIN-3" }
-
 variable "instances" { type = number, default = 4 }
 variable "ocpus"     { type = number, default = 1 }
 variable "memory_gb" { type = number, default = 6 }
