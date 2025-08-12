@@ -26,8 +26,5 @@ resource "oci_core_instance" "this" {
     user_data           = var.cloud_init_base64
   }
 
-  freeform_tags = merge({
-    "managed-by" = "terraform",
-    "role"       = var.role
-  }, var.tags)
+  freeform_tags = merge({ "managed-by" = "terraform", "role" = var.role }, var.tags)
 }

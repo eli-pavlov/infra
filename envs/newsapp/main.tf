@@ -1,4 +1,6 @@
 locals {
+  node_names = ["master", "node-1", "node-2", "node-3"]
+  node_roles = ["control-plane", "worker", "worker", "worker"]
   total_ocpus = var.instances * var.ocpus
   total_mem   = var.instances * var.memory_gb
 }
@@ -12,33 +14,21 @@ locals {
 }
 
 data "oci_core_vcns" "this" {
-  compartment_id = var.tenancy_ocid
+  compartment_id = var.network_compartment_ocid
   display_name   = var.vcn_display_name
 }
 
 locals { vcn_id = one(data.oci_core_vcns.this.virtual_networks).id }
 
 data "oci_core_subnets" "this" {
-  compartment_id = var.tenancy_ocid
+  compartment_id = var.network_compartment_ocid
   vcn_id         = local.vcn_id
   display_name   = var.subnet_display_name
 }
 
-locals { subnet_id = one(data.oci_core_subnets.this.subnets).id }
-
-data "oci_core_images" "ubuntu" {
-  compartment_id = var.tenancy_ocid
-  shape          = "VM.Standard.A1.Flex"
-  filter {
-    name   = "display_name"
-    values = [var.ubuntu_image_display_name]
-    regex  = false
-  }
-}
-
 locals {
-  image_id       = one(data.oci_core_images.ubuntu.images).id
-  cloud_init_b64 = var.cloud_init == "" ? "" : base64encode(var.cloud_init)
+  subnet_id       = one(data.oci_core_subnets.this.subnets).id
+  cloud_init_b64  = var.cloud_init == "" ? "" : base64encode(var.cloud_init)
 }
 
 resource "null_resource" "free_tier_guards" {
@@ -56,21 +46,23 @@ resource "null_resource" "free_tier_guards" {
 
 module "nodes" {
   source = "../../modules/instance"
-  count  = var.instances
+  count  = length(local.node_names)
 
-  name                     = "${var.name_prefix}-${count.index + 1}"
-  hostname                 = "${var.name_prefix}-${count.index + 1}"
-  role                     = var.role
+  name                     = local.node_names[count.index]
+  hostname                 = local.node_names[count.index]
+  role                     = local.node_roles[count.index]
   availability_domain_name = local.ad_name
   fault_domain             = var.fault_domain
-  compartment_ocid         = var.tenancy_ocid
-  subnet_ocid              = local.subnet_id
-  image_ocid               = local.image_id
-  ssh_public_key           = var.ssh_public_key
-  ocpus                    = var.ocpus
-  memory_gb                = var.memory_gb
-  cloud_init_base64        = local.cloud_init_b64
-  tags                     = var.tags
+
+  compartment_ocid = var.compartment_ocid
+  subnet_ocid      = local.subnet_id
+  image_ocid       = var.image_ocid
+  ssh_public_key   = var.ssh_public_key
+
+  ocpus             = var.ocpus
+  memory_gb         = var.memory_gb
+  cloud_init_base64 = local.cloud_init_b64
+  tags              = var.tags
 }
 
 output "public_ips"   { value = [for m in module.nodes : m.public_ip] }

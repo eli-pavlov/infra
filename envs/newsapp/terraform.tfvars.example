@@ -1,5 +1,4 @@
+# non-secrets example only
 instances = 4
 ocpus     = 1
 memory_gb = 6
-
-ubuntu_image_display_name = "Canonical-Ubuntu-24.04-Minimal-aarch64-2025.05.20-0"
