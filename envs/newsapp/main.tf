@@ -1,8 +1,9 @@
 locals {
-  node_names = ["master", "node-1", "node-2", "node-3"]
-  node_roles = ["control-plane", "worker", "worker", "worker"]
-  total_ocpus = var.instances * var.ocpus
-  total_mem   = var.instances * var.memory_gb
+  node_names        = ["master", "node-1", "node-2", "node-3"]
+  node_roles        = ["control-plane", "worker", "worker", "worker"]
+  instances_count   = length(local.node_names)
+  total_ocpus       = local.instances_count * var.ocpus
+  total_mem         = local.instances_count * var.memory_gb
 }
 
 data "oci_identity_availability_domains" "ads" {
@@ -18,7 +19,10 @@ data "oci_core_vcns" "this" {
   display_name   = var.vcn_display_name
 }
 
-locals { vcn_id = one(data.oci_core_vcns.this.virtual_networks).id }
+locals {
+  vcn_id                 = one(data.oci_core_vcns.this.virtual_networks).id
+  default_sl_id          = one(data.oci_core_vcns.this.virtual_networks).default_security_list_id
+}
 
 data "oci_core_subnets" "this" {
   compartment_id = var.network_compartment_ocid
@@ -27,8 +31,38 @@ data "oci_core_subnets" "this" {
 }
 
 locals {
-  subnet_id       = one(data.oci_core_subnets.this.subnets).id
-  cloud_init_b64  = var.cloud_init == "" ? "" : base64encode(var.cloud_init)
+  subnet_id      = one(data.oci_core_subnets.this.subnets).id
+  cloud_init_b64 = var.cloud_init == "" ? "" : base64encode(var.cloud_init)
+}
+
+# Default Security List management (rules come from secrets as JSON)
+locals {
+  ingress_rules = try(jsondecode(var.ingress_rules_json), [])
+  egress_rules  = try(jsondecode(var.egress_rules_json),  [ { protocol = "all", destination = "0.0.0.0/0" } ])
+}
+
+resource "oci_core_default_security_list" "managed" {
+  manage_default_resource_id = local.default_sl_id
+
+  dynamic "ingress_security_rules" {
+    for_each = local.ingress_rules
+    content {
+      protocol      = ingress_security_rules.value.protocol
+      source        = ingress_security_rules.value.cidr
+      source_type   = "CIDR_BLOCK"
+      is_stateless  = false
+    }
+  }
+
+  dynamic "egress_security_rules" {
+    for_each = local.egress_rules
+    content {
+      protocol          = egress_security_rules.value.protocol
+      destination       = egress_security_rules.value.destination
+      destination_type  = "CIDR_BLOCK"
+      is_stateless      = false
+    }
+  }
 }
 
 resource "null_resource" "free_tier_guards" {
@@ -46,7 +80,7 @@ resource "null_resource" "free_tier_guards" {
 
 module "nodes" {
   source = "../../modules/instance"
-  count  = length(local.node_names)
+  count  = local.instances_count
 
   name                     = local.node_names[count.index]
   hostname                 = local.node_names[count.index]

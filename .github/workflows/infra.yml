@@ -35,15 +35,17 @@ jobs:
           TF_VAR_availability_domain_number:${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:              ${{ secrets.FAULT_DOMAIN }}
 
-          TF_VAR_compartment_ocid:          ${{ secrets.COMPARTMENT_OCID }}          # compute (e.g., newsapp)
-          TF_VAR_network_compartment_ocid:  ${{ secrets.NETWORK_COMPARTMENT_OCID }}  # where VCN/subnet live (root or same)
+          TF_VAR_compartment_ocid:          ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_network_compartment_ocid:  ${{ secrets.NETWORK_COMPARTMENT_OCID }}
 
           TF_VAR_vcn_display_name:          ${{ secrets.VCN_DISPLAY_NAME }}
           TF_VAR_subnet_display_name:       ${{ secrets.SUBNET_DISPLAY_NAME }}
 
           TF_VAR_image_ocid:                ${{ secrets.IMAGE_OCID }}
 
-          TF_VAR_instances:                 ${{ vars.NODE_COUNT || 4 }}
+          TF_VAR_ingress_rules_json:        ${{ secrets.INGRESS_RULES_JSON }}
+          TF_VAR_egress_rules_json:         ${{ secrets.EGRESS_RULES_JSON }}
+
           TF_VAR_ocpus:                     ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                 ${{ vars.NODE_MEMORY_GB || 6 }}
         run: |
@@ -84,7 +86,9 @@ jobs:
 
           TF_VAR_image_ocid:                ${{ secrets.IMAGE_OCID }}
 
-          TF_VAR_instances:                 ${{ vars.NODE_COUNT || 4 }}
+          TF_VAR_ingress_rules_json:        ${{ secrets.INGRESS_RULES_JSON }}
+          TF_VAR_egress_rules_json:         ${{ secrets.EGRESS_RULES_JSON }}
+
           TF_VAR_ocpus:                     ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                 ${{ vars.NODE_MEMORY_GB || 6 }}
         run: terraform apply -input=false -auto-approve

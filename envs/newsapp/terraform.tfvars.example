@@ -1,4 +1,2 @@
-# non-secrets example only
-instances = 4
 ocpus     = 1
 memory_gb = 6
