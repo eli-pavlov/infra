@@ -17,11 +17,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - name: Terraform Init
+
+      - name: Write backend config (OCI Object Storage)
         working-directory: envs/newsapp
-        run: terraform init -backend-config=backend.hcl || terraform init
+        run: |
+          cat > backend.oci.hcl <<'EOF'
+          bucket    = "${{ secrets.TF_STATE_BUCKET }}"   # iac
+          namespace = "${{ secrets.OS_NAMESPACE }}"      # your object storage namespace
+          region    = "${{ secrets.OCI_REGION }}"
+          key       = "newsapp.tfstate"                  # state at bucket root
+          EOF
+
+      - name: Terraform Init (OCI backend)
+        working-directory: envs/newsapp
         env:
-          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+          OCI_TENANCY:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:      ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+        run: terraform init -backend-config=backend.oci.hcl
+
       - name: Terraform Validate & Plan
         working-directory: envs/newsapp
         env:
@@ -40,7 +56,6 @@ jobs:
 
           TF_VAR_vcn_display_name:          ${{ secrets.VCN_DISPLAY_NAME }}
           TF_VAR_subnet_display_name:       ${{ secrets.SUBNET_DISPLAY_NAME }}
-
           TF_VAR_image_ocid:                ${{ secrets.IMAGE_OCID }}
 
           TF_VAR_ingress_rules_json:        ${{ secrets.INGRESS_RULES_JSON }}
@@ -60,11 +75,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - name: Terraform Init
+
+      - name: Write backend config (OCI Object Storage)
         working-directory: envs/newsapp
-        run: terraform init -backend-config=backend.hcl || terraform init
+        run: |
+          cat > backend.oci.hcl <<'EOF'
+          bucket    = "${{ secrets.TF_STATE_BUCKET }}"
+          namespace = "${{ secrets.OS_NAMESPACE }}"
+          region    = "${{ secrets.OCI_REGION }}"
+          key       = "newsapp.tfstate"
+          EOF
+
+      - name: Terraform Init (OCI backend)
+        working-directory: envs/newsapp
         env:
-          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+          OCI_TENANCY:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:      ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+        run: terraform init -backend-config=backend.oci.hcl
+
       - name: Terraform Apply
         working-directory: envs/newsapp
         env:
@@ -83,7 +114,6 @@ jobs:
 
           TF_VAR_vcn_display_name:          ${{ secrets.VCN_DISPLAY_NAME }}
           TF_VAR_subnet_display_name:       ${{ secrets.SUBNET_DISPLAY_NAME }}
-
           TF_VAR_image_ocid:                ${{ secrets.IMAGE_OCID }}
 
           TF_VAR_ingress_rules_json:        ${{ secrets.INGRESS_RULES_JSON }}
