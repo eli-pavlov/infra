@@ -196,7 +196,10 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
   source_type               = "CIDR_BLOCK"
   source                    = each.value
   tcp_options {
-    destination_port_range { min = 80  max = 80 }
+    destination_port_range {
+      min = 80
+      max = 80
+    }
   }
 }
 
@@ -208,9 +211,13 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
   source_type               = "CIDR_BLOCK"
   source                    = each.value
   tcp_options {
-    destination_port_range { min = 443 max = 443 }
+    destination_port_range {
+      min = 443
+      max = 443
+    }
   }
 }
+
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_egress_all" {
   for_each                  = local.public_nsg_id == null ? {} : { (local.public_nsg_id) = true }
