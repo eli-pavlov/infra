@@ -1,17 +1,14 @@
-name: infra-apply
+name: infra-destroy
 on:
-  push:
-    branches: [ main, master ]
-    paths: [ 'envs/**', 'modules/**', 'bootstrap/**', '.github/workflows/**' ]
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type APPLY to run terraform apply'
+        description: 'Type DESTROY to run terraform destroy'
         required: true
-        default: 'APPLY'
+        default: 'DESTROY'
 
 concurrency:
-  group: infra-apply-${{ github.ref }}
+  group: infra-destroy-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -38,11 +35,9 @@ jobs:
           TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
         run: terraform apply -input=false -auto-approve
 
-  apply:
+  destroy:
     needs: [ensure_state_bucket]
-    if: >
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'APPLY')
+    if: github.event.inputs.confirm == 'DESTROY'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -69,7 +64,7 @@ jobs:
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
         run: terraform init -backend-config=backend.oci.hcl
 
-      - name: Terraform Apply
+      - name: Terraform Destroy
         working-directory: envs/newsapp
         env:
           TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
@@ -92,20 +87,4 @@ jobs:
 
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
-        run: terraform apply -input=false -auto-approve
-
-      - name: Capture Terraform outputs (JSON + summary)
-        working-directory: envs/newsapp
-        run: |
-          terraform output -json > tf-outputs.json
-          echo "## Provisioned outputs" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```json' >> $GITHUB_STEP_SUMMARY
-          cat tf-outputs.json >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload outputs artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tf-outputs
-          path: envs/newsapp/tf-outputs.json
+        run: terraform destroy -input=false -auto-approve
