@@ -20,7 +20,7 @@ provider "oci" {
 
   # Prefer file path if supplied by CI; otherwise use in-memory PEM
   private_key_path = var.private_key_path
-  private_key      = (var.private_key_path != null && trim(var.private_key_path) != "")
+  private_key      = (var.private_key_path != null && trimspace(var.private_key_path) != "")
                    ? null
                    : var.private_key_pem
 }
