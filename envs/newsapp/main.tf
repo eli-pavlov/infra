@@ -35,8 +35,9 @@ data "oci_core_vcns" "vcns" {
 
 locals {
   vcns_all  = try(data.oci_core_vcns.vcns.virtual_networks, [])
-  vcn_match = [for v in vcns_all : v if v.display_name == var.vcn_display_name]
-  vcn_id    = (length(local.vcn_match) == 1) ? local.vcn_match[0].id : null
+  vcn_match = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
+  public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
+
 }
 
 resource "null_resource" "validate_vcn" {
