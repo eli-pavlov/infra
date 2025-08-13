@@ -23,7 +23,7 @@ resource "null_resource" "validate_ad" {
   lifecycle {
     precondition {
       condition     = length(local.ads_names) > 0 && local.ad_index >= 0 && local.ad_index < length(local.ads_names)
-      error_message = "Invalid availability_domain_number=${var.availability_domain_number}. Found ${length(local.ads_names)} ADs; valid range is 1..${length(local.ads_names)}."
+      error_message = "Invalid availability_domain_number; must be within the available AD range."
     }
   }
 }
@@ -59,16 +59,6 @@ locals {
   subnets_all         = try([for s in data.oci_core_subnets.subnets.subnets : s], [])
   public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
   public_subnet_id    = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
-}
-
-
-resource "null_resource" "validate_ad" {
-  lifecycle {
-    precondition {
-      condition     = length(local.ads_names) > 0 && local.ad_index >= 0 && local.ad_index < length(local.ads_names)
-      error_message = "Invalid availability_domain_number; must be within the available AD range."
-    }
-  }
 }
 
 # --- NAT + private route table + PRIVATE subnet (new) ---
