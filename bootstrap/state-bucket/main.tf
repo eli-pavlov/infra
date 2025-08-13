@@ -11,7 +11,10 @@ data "oci_objectstorage_bucket_summaries" "list" {
 
 locals {
   bucket_summaries = try(data.oci_objectstorage_bucket_summaries.list.bucket_summaries, [])
-  bucket_exists    = length([for b in local.bucket_summaries : b.name if b.name == var.bucket_name]) > 0
+  bucket_exists    = length([
+    for b in local.bucket_summaries : b.name
+    if b.name == var.bucket_name
+  ]) > 0
 }
 
 # Create the bucket only if it doesn't exist
@@ -24,5 +27,10 @@ resource "oci_objectstorage_bucket" "state" {
   storage_tier   = "Standard"
 }
 
-output "bucket_namespace" { value = data.oci_objectstorage_namespace.ns.namespace }
-output "bucket_created"   { value = !local.bucket_exists }
+output "bucket_namespace" {
+  value = data.oci_objectstorage_namespace.ns.namespace
+}
+
+output "bucket_created" {
+  value = !local.bucket_exists
+}

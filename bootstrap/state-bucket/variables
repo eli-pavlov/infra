@@ -1,5 +1,0 @@
-# Non-sensitive inputs
-variable "bucket_name" {
-  type        = string
-  description = "Object Storage bucket used for Terraform state."
-}
