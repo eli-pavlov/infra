@@ -188,29 +188,40 @@ locals {
   public_cidrs = [for r in try(jsondecode(var.ingress_rules_json), []) : r.cidr]
 }
 
+# 80/tcp from allowed CIDRs
 resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
-  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : "80-${cidr}" => cidr }
-  network_security_group_id = local.public_nsg_id
+  for_each                  = toset(local.public_cidrs)
+  network_security_group_id = oci_core_network_security_group.nsg_public_www.id
   direction                 = "INGRESS"
-  protocol                  = "6" # TCP
+  protocol                  = "6"            # TCP
   source_type               = "CIDR_BLOCK"
   source                    = each.value
+
   tcp_options {
-    destination_port_range { min = 80, max = 80 }
+    destination_port_range {
+      min = 80
+      max = 80
+    }
   }
 }
 
+# 443/tcp from allowed CIDRs
 resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
-  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : "443-${cidr}" => cidr }
-  network_security_group_id = local.public_nsg_id
+  for_each                  = toset(local.public_cidrs)
+  network_security_group_id = oci_core_network_security_group.nsg_public_www.id
   direction                 = "INGRESS"
-  protocol                  = "6" # TCP
+  protocol                  = "6"            # TCP
   source_type               = "CIDR_BLOCK"
   source                    = each.value
+
   tcp_options {
-    destination_port_range { min = 443, max = 443 }
+    destination_port_range {
+      min = 443
+      max = 443
+    }
   }
 }
+
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_egress_all" {
   for_each                  = local.public_nsg_id == null ? {} : { (local.public_nsg_id) = true }
