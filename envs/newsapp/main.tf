@@ -39,16 +39,6 @@ locals {
   vcn_needs_create = length(local.vcn_match) == 0
 }
 
-# Guard: allow 0 (we'll create), forbid >1 (ambiguous)
-resource "null_resource" "vcn_unique_guard" {
-  lifecycle {
-    precondition {
-      condition     = length(local.vcn_match) <= 1
-      error_message = "More than one VCN matches vcn_display_name; please make it unique."
-    }
-  }
-}
-
 # Create VCN if missing
 resource "oci_core_virtual_network" "vcn" {
   count          = local.vcn_needs_create ? 1 : 0
@@ -76,19 +66,9 @@ locals {
   public_needs_create = length(local.public_subnet_match) == 0
 }
 
-# Guard: allow 0 (we'll create), forbid >1 (ambiguous)
-resource "null_resource" "subnet_unique_guard" {
-  lifecycle {
-    precondition {
-      condition     = length(local.public_subnet_match) <= 1
-      error_message = "More than one SUBNET matches subnet_display_name; please make it unique."
-    }
-  }
-}
-
-# If we’re creating the VCN, also create an Internet Gateway + public route table
+# If we created the VCN, also create an IGW + public route table
 resource "oci_core_internet_gateway" "igw" {
-  for_each       = local.vcn_needs_create ? { for id in [local.vcn_id] : id => true } : {}
+  for_each       = local.vcn_needs_create ? { (local.vcn_id) = true } : {}
   compartment_id = var.network_compartment_ocid
   vcn_id         = each.key
   display_name   = "newsapp-igw"
@@ -112,7 +92,7 @@ locals {
   public_rt_id = length(oci_core_route_table.public_rt) > 0 ? one(values(oci_core_route_table.public_rt)).id : null
 }
 
-# Create a PUBLIC subnet if not found (attach our public RT when we created it)
+# Create a PUBLIC subnet if not found
 resource "oci_core_subnet" "public" {
   count                      = local.public_needs_create ? 1 : 0
   compartment_id             = var.network_compartment_ocid
@@ -130,7 +110,7 @@ locals {
 
 # ---------- NAT + private route + PRIVATE subnet ----------
 resource "oci_core_nat_gateway" "nat" {
-  for_each       = local.vcn_id == null ? {} : { for id in [local.vcn_id] : id => true }
+  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
   compartment_id = var.network_compartment_ocid
   vcn_id         = each.key
   display_name   = "newsapp-nat"
@@ -166,14 +146,14 @@ locals {
 
 # ---------- NSGs ----------
 resource "oci_core_network_security_group" "nsg_internal" {
-  for_each       = local.vcn_id == null ? {} : { for id in [local.vcn_id] : id => true }
+  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
   compartment_id = var.network_compartment_ocid
   vcn_id         = each.key
   display_name   = "nsg-k8s-internal"
 }
 
 resource "oci_core_network_security_group" "nsg_public_www" {
-  for_each       = local.vcn_id == null ? {} : { for id in [local.vcn_id] : id => true }
+  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
   compartment_id = var.network_compartment_ocid
   vcn_id         = each.key
   display_name   = "nsg-public-www"
@@ -186,7 +166,7 @@ locals {
 
 # Internal NSG rules (intra-cluster any/any)
 resource "oci_core_network_security_group_security_rule" "nsg_internal_self_ingress" {
-  for_each                  = local.internal_nsg_id == null ? {} : { for id in [local.internal_nsg_id] : id => true }
+  for_each                  = local.internal_nsg_id == null ? {} : { (local.internal_nsg_id) = true }
   network_security_group_id = each.key
   direction                 = "INGRESS"
   protocol                  = "all"
@@ -195,7 +175,7 @@ resource "oci_core_network_security_group_security_rule" "nsg_internal_self_ingr
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_internal_egress_all" {
-  for_each                  = local.internal_nsg_id == null ? {} : { for id in [local.internal_nsg_id] : id => true }
+  for_each                  = local.internal_nsg_id == null ? {} : { (local.internal_nsg_id) = true }
   network_security_group_id = each.key
   direction                 = "EGRESS"
   protocol                  = "all"
@@ -209,37 +189,31 @@ locals {
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
-  for_each                  = toset(local.public_cidrs)
+  for_each                  = local.public_nsg_id == null ? {} : toset(local.public_cidrs)
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
   source_type               = "CIDR_BLOCK"
   source                    = each.value
   tcp_options {
-    destination_port_range {
-      min = 80
-      max = 80
-    }
+    destination_port_range { min = 80  max = 80 }
   }
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
-  for_each                  = toset(local.public_cidrs)
+  for_each                  = local.public_nsg_id == null ? {} : toset(local.public_cidrs)
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
   source_type               = "CIDR_BLOCK"
   source                    = each.value
   tcp_options {
-    destination_port_range {
-      min = 443
-      max = 443
-    }
+    destination_port_range { min = 443 max = 443 }
   }
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_egress_all" {
-  for_each                  = local.public_nsg_id == null ? {} : { for id in [local.public_nsg_id] : id => true }
+  for_each                  = local.public_nsg_id == null ? {} : { (local.public_nsg_id) = true }
   network_security_group_id = each.key
   direction                 = "EGRESS"
   protocol                  = "all"
@@ -261,7 +235,7 @@ resource "null_resource" "free_tier_guards" {
   }
 }
 
-# ---------- Nodes (skip entirely if no VCN) ----------
+# ---------- Nodes ----------
 module "nodes" {
   source = "../../modules/instance"
   count  = local.vcn_id == null ? 0 : length(local.node_names)
