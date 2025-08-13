@@ -28,15 +28,15 @@ output "node_roles" {
   value = zipmap(local.node_names, local.node_roles)
 }
 
-# Infra summary (declassify fd so the output isn't sensitive)
+# Infra summary (explicitly declassify each potentially-sensitive contributor)
 output "summary" {
   value = {
     names            = local.node_names
     roles            = local.node_roles
-    ad               = local.ad_name
+    ad               = nonsensitive(local.ad_name)
     fd               = nonsensitive(var.fault_domain)
-    vcn_id           = local.vcn_id
-    public_subnet_id = local.public_subnet_id
-    private_subnet   = oci_core_subnet.private.id
+    vcn_id           = nonsensitive(local.vcn_id)
+    public_subnet_id = nonsensitive(local.public_subnet_id)
+    private_subnet   = nonsensitive(oci_core_subnet.private.id)
   }
 }
