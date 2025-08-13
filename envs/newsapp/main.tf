@@ -7,34 +7,66 @@ locals {
   total_mem       = local.instances_count * var.memory_gb
 }
 
-# --- AD name from number ---
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
 }
 
 locals {
-  ad_name        = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_number - 1].name
+  ads_names  = [for ad in try(data.oci_identity_availability_domains.ads.availability_domains, []) : ad.name]
+  ad_index   = var.availability_domain_number - 1
+  # Guarded lookup: if out-of-range, produce empty string; validation below will fail with a clear message
+  ad_name    = (local.ad_index >= 0 && local.ad_index < length(local.ads_names)) ? local.ads_names[local.ad_index] : ""
   cloud_init_b64 = var.cloud_init == "" ? "" : base64encode(var.cloud_init)
 }
 
-# --- VCN & existing PUBLIC subnet (for node-1) ---
-data "oci_core_vcns" "vcn" {
+resource "null_resource" "validate_ad" {
+  lifecycle {
+    precondition {
+      condition     = length(local.ads_names) > 0 && local.ad_index >= 0 && local.ad_index < length(local.ads_names)
+      error_message = "Invalid availability_domain_number=${var.availability_domain_number}. Found ${length(local.ads_names)} ADs; valid range is 1..${length(local.ads_names)}."
+    }
+  }
+}
+
+# --- VCN (find by display_name, null-safe) ---
+data "oci_core_vcns" "vcns" {
   compartment_id = var.network_compartment_ocid
-  display_name   = var.vcn_display_name
 }
 
 locals {
-  vcn_id = one(data.oci_core_vcns.vcn.virtual_networks).id
+  vcns_all  = try(data.oci_core_vcns.vcns.virtual_networks, [])
+  vcn_match = [for v in vcns_all : v if v.display_name == var.vcn_display_name]
+  vcn_id    = (length(local.vcn_match) == 1) ? local.vcn_match[0].id : null
 }
 
-data "oci_core_subnets" "public_existing" {
+resource "null_resource" "validate_vcn" {
+  lifecycle {
+    precondition {
+      condition     = length(local.vcn_match) == 1
+      error_message = "VCN '${var.vcn_display_name}' not found (or not unique) in compartment '${var.network_compartment_ocid}'."
+    }
+  }
+}
+
+# --- PUBLIC subnet (find by display_name within that VCN), null-safe ---
+data "oci_core_subnets" "subnets" {
   compartment_id = var.network_compartment_ocid
   vcn_id         = local.vcn_id
-  display_name   = var.subnet_display_name
 }
 
 locals {
-  public_subnet_id = one(data.oci_core_subnets.public_existing.subnets).id
+  subnets_all        = try(data.oci_core_subnets.subnets.subnets, [])
+  public_subnet_match = [for s in subnets_all : s if s.display_name == var.subnet_display_name]
+  public_subnet_id   = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
+}
+
+resource "null_resource" "validate_public_subnet" {
+  lifecycle {
+    precondition {
+      condition     = length(local.public_subnet_match) == 1
+      error_message = "Subnet '${var.subnet_display_name}' not found (or not unique) in VCN '${var.vcn_display_name}'."
+    }
+  }
 }
 
 # --- NAT + private route table + PRIVATE subnet (new) ---
