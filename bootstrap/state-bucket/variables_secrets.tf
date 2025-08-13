@@ -32,3 +32,8 @@ variable "bucket_name" {
   type      = string
   sensitive = true
 }
+
+variable "os_namespace" {
+  type      = string
+  sensitive = true
+}

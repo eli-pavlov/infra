@@ -1,11 +1,7 @@
-data "oci_objectstorage_namespace" "ns" {
-  compartment_id = var.tenancy_ocid
-}
-
-# List buckets; if none with the same name, we'll create one.
+# List buckets in the compartment/namespace; create only if missing
 data "oci_objectstorage_bucket_summaries" "list" {
   compartment_id = var.compartment_ocid
-  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  namespace      = var.os_namespace
 }
 
 locals {
@@ -16,8 +12,8 @@ locals {
 }
 
 resource "oci_objectstorage_bucket" "state" {
-  count         = local.exists ? 0 : 1
+  count          = local.exists ? 0 : 1
   compartment_id = var.compartment_ocid
   name           = var.bucket_name
-  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  namespace      = var.os_namespace
 }
