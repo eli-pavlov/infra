@@ -273,7 +273,7 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_http_https"
 
 # OCI Compute Instances module call
 module "nodes" {
-  source = "./modules/instance"
+  source = "/modules/instance"
   for_each = local.node_config
 
   name                     = each.key
