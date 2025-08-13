@@ -64,3 +64,23 @@ variable "ingress_rules_json" {
   description = "JSON list of CIDRs allowed to reach ports 80/443 on node-1."
   default     = "[]"
 }
+
+variable "ocpus" {
+  type    = number
+  default = 1
+}
+
+variable "memory_gb" {
+  type    = number
+  default = 6
+}
+
+variable "cloud_init" {
+  type    = string
+  default = ""
+}
+
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
