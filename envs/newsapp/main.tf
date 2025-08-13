@@ -179,9 +179,13 @@ module "nodes" {
 
   # node-1 (index 1) gets public IP + public NSG; others private only
   assign_public_ip = count.index == 1
-  nsg_ids          = count.index == 1
-                      ? [oci_core_network_security_group.nsg_internal.id, oci_core_network_security_group.nsg_public_www.id]
-                      : [oci_core_network_security_group.nsg_internal.id]
+  nsg_ids          = count.index == 1 ? [
+    oci_core_network_security_group.nsg_internal.id,
+    oci_core_network_security_group.nsg_public_www.id
+  ] : [
+    oci_core_network_security_group.nsg_internal.id
+  ]
+
 
   ocpus             = var.ocpus
   memory_gb         = var.memory_gb
