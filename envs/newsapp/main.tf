@@ -34,7 +34,7 @@ data "oci_core_vcns" "vcns" {
 }
 
 locals {
-  vcns_all  = try(data.oci_core_vcns.vcns.virtual_networks, [])
+  vcns_all  = try([for v in data.oci_core_vcns.vcns.virtual_networks : v], [])
   vcn_match = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
   vcn_id    = (length(local.vcn_match) == 1) ? local.vcn_match[0].id : null
 }
@@ -56,17 +56,17 @@ data "oci_core_subnets" "subnets" {
 }
 
 locals {
-  subnets_all         = try(data.oci_core_subnets.subnets.subnets, [])
+  subnets_all         = try([for s in data.oci_core_subnets.subnets.subnets : s], [])
   public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
   public_subnet_id    = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
 }
 
 
-resource "null_resource" "validate_public_subnet" {
+resource "null_resource" "validate_ad" {
   lifecycle {
     precondition {
-      condition     = length(local.public_subnet_match) == 1
-      error_message = "Subnet '${var.subnet_display_name}' not found (or not unique) in VCN '${var.vcn_display_name}'."
+      condition     = length(local.ads_names) > 0 && local.ad_index >= 0 && local.ad_index < length(local.ads_names)
+      error_message = "Invalid availability_domain_number; must be within the available AD range."
     }
   }
 }
