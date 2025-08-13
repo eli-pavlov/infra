@@ -65,3 +65,8 @@ variable "ingress_rules_json" {
   type      = string
   sensitive = true
 }
+
+variable "private_key_path" {
+  type      = string
+  sensitive = true
+}
