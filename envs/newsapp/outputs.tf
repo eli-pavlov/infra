@@ -11,7 +11,7 @@ output "private_ips" {
   value = [for m in module.nodes : m.private_ip]
 }
 
-# Name -> values maps (handy!)
+# Name -> values maps
 output "node_public_ips" {
   value = zipmap(local.node_names, [for m in module.nodes : m.public_ip])
 }
