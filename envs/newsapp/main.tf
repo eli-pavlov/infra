@@ -189,7 +189,7 @@ locals {
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
-  for_each                  = local.public_nsg_id == null ? {} : toset(local.public_cidrs)
+  for_each                  = local.public_nsg_id == null ? toset([]) : toset(local.public_cidrs)
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
@@ -204,7 +204,7 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
-  for_each                  = local.public_nsg_id == null ? {} : toset(local.public_cidrs)
+  for_each                  = local.public_nsg_id == null ? toset([]) : toset(local.public_cidrs)
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
