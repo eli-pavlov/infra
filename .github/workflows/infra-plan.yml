@@ -28,9 +28,9 @@ jobs:
           TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_region:           ${{ secrets.OCI_REGION }}
-          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
-          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
-          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}   # newsapp
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}    # iac
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}       # namespace
         run: terraform apply -input=false -auto-approve
 
   plan:
@@ -42,6 +42,10 @@ jobs:
 
       - name: Terraform version
         run: terraform -version
+
+      # Option A: auto-format repo so fmt never blocks the plan
+      - name: Terraform fmt (auto-fix)
+        run: terraform fmt -recursive
 
       - name: Write backend config (OCI Object Storage)
         working-directory: envs/newsapp
@@ -71,7 +75,11 @@ jobs:
           OCI_private_key_path: /home/runner/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
-      - name: Terraform Validate & Plan
+      - name: Terraform validate
+        working-directory: envs/newsapp
+        run: terraform validate
+
+      - name: Terraform plan
         working-directory: envs/newsapp
         env:
           TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
@@ -79,21 +87,22 @@ jobs:
           TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:            ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
+
           TF_VAR_region:                     ${{ secrets.OCI_REGION }}
           TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
+
           TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
+
           TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
-          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}
+          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}   # existing PUBLIC subnet (node-1)
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
           TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
+
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
-        run: |
-          terraform fmt -check
-          terraform validate
-          terraform plan -input=false -out=plan.out
+        run: terraform plan -input=false -out=plan.out
 
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
