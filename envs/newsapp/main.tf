@@ -7,7 +7,7 @@ locals {
   total_mem       = local.instances_count * var.memory_gb
 }
 
-# ---- ADs / cloud-init ---------------------------------------------
+# ---------- ADs / cloud-init ----------
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
 }
@@ -28,27 +28,32 @@ resource "null_resource" "validate_ad" {
   }
 }
 
-# ---- VCN lookup (null-safe) ---------------------------------------
+# ---------- Look for VCN by display name ----------
 data "oci_core_vcns" "vcns" {
   compartment_id = var.network_compartment_ocid
 }
 
 locals {
-  vcns_all  = try([for v in data.oci_core_vcns.vcns.virtual_networks : v], [])
-  vcn_match = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
-  vcn_id    = (length(local.vcn_match) == 1) ? local.vcn_match[0].id : null
+  vcns_all         = try([for v in data.oci_core_vcns.vcns.virtual_networks : v], [])
+  vcn_match        = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
+  vcn_needs_create = length(local.vcn_match) == 0
 }
 
-resource "null_resource" "validate_vcn" {
-  lifecycle {
-    precondition {
-      condition     = length(local.vcn_match) == 1
-      error_message = "Required VCN not found or not unique in the selected compartment."
-    }
-  }
+# Create VCN if missing
+resource "oci_core_virtual_network" "vcn" {
+  count          = local.vcn_needs_create ? 1 : 0
+  compartment_id = var.network_compartment_ocid
+  display_name   = var.vcn_display_name
+  cidr_blocks    = [var.vcn_cidr]
+  dns_label      = "newsappvcn"
 }
 
-# ---- Existing PUBLIC subnet lookup (null-safe) ---------------------
+# Resolve VCN id (new or existing)
+locals {
+  vcn_id = local.vcn_needs_create ? oci_core_virtual_network.vcn[0].id : local.vcn_match[0].id
+}
+
+# ---------- PUBLIC subnet: find-or-create ----------
 data "oci_core_subnets" "subnets" {
   count          = local.vcn_id == null ? 0 : 1
   compartment_id = var.network_compartment_ocid
@@ -56,22 +61,54 @@ data "oci_core_subnets" "subnets" {
 }
 
 locals {
-  subnets_all          = local.vcn_id == null ? [] : try([for s in data.oci_core_subnets.subnets[0].subnets : s], [])
-  public_subnet_match  = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
-  public_subnet_id     = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
+  subnets_all            = local.vcn_id == null ? [] : try([for s in data.oci_core_subnets.subnets[0].subnets : s], [])
+  public_subnet_match    = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
+  public_needs_create    = length(local.public_subnet_match) == 0
 }
 
-resource "null_resource" "validate_public_subnet" {
-  lifecycle {
-    precondition {
-      condition     = local.vcn_id != null && length(local.public_subnet_match) == 1
-      error_message = "Required PUBLIC subnet not found or not unique in the target VCN."
-    }
+# If we’re creating the VCN, also create an Internet Gateway + public route table
+resource "oci_core_internet_gateway" "igw" {
+  for_each      = local.vcn_needs_create ? { (local.vcn_id) = true } : {}
+  compartment_id = var.network_compartment_ocid
+  vcn_id         = each.key
+  display_name   = "newsapp-igw"
+  enabled        = true
+}
+
+resource "oci_core_route_table" "public_rt" {
+  for_each      = oci_core_internet_gateway.igw
+  compartment_id = var.network_compartment_ocid
+  vcn_id         = each.key
+  display_name   = "newsapp-public-rt"
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_internet_gateway.igw[each.key].id
   }
 }
 
-# ---- NAT, Route, Private Subnet – gated by VCN presence -----------
-# Key resources by vcn_id so they are skipped entirely when vcn_id=null
+locals {
+  public_rt_id = length(oci_core_route_table.public_rt) > 0 ? one(values(oci_core_route_table.public_rt)).id : null
+}
+
+# Create a PUBLIC subnet if not found (attach our public RT when we created it)
+resource "oci_core_subnet" "public" {
+  count                      = local.public_needs_create ? 1 : 0
+  compartment_id             = var.network_compartment_ocid
+  vcn_id                     = local.vcn_id
+  cidr_block                 = var.public_subnet_cidr
+  display_name               = var.subnet_display_name
+  prohibit_public_ip_on_vnic = false
+  route_table_id             = local.public_rt_id
+  dns_label                  = "newsapppub"
+}
+
+locals {
+  public_subnet_id = local.public_needs_create ? oci_core_subnet.public[0].id : local.public_subnet_match[0].id
+}
+
+# ---------- NAT + private route + PRIVATE subnet (always create for our cluster) ----------
 resource "oci_core_nat_gateway" "nat" {
   for_each      = local.vcn_id == null ? {} : { (local.vcn_id) = true }
   compartment_id = var.network_compartment_ocid
@@ -93,17 +130,21 @@ resource "oci_core_route_table" "private_rt" {
 }
 
 resource "oci_core_subnet" "private" {
-  for_each                 = oci_core_route_table.private_rt
-  compartment_id           = var.network_compartment_ocid
-  vcn_id                   = each.key
-  cidr_block               = var.private_subnet_cidr
-  display_name             = "newsapp-private-1"
+  for_each                   = oci_core_route_table.private_rt
+  compartment_id             = var.network_compartment_ocid
+  vcn_id                     = each.key
+  cidr_block                 = var.private_subnet_cidr
+  display_name               = "newsapp-private-1"
   prohibit_public_ip_on_vnic = true
-  route_table_id           = oci_core_route_table.private_rt[each.key].id
-  dns_label                = "newsapppriv"
+  route_table_id             = oci_core_route_table.private_rt[each.key].id
+  dns_label                  = "newsapppriv"
 }
 
-# ---- NSGs – gated by VCN presence ---------------------------------
+locals {
+  private_subnet_id = local.vcn_id == null ? null : one(values(oci_core_subnet.private)).id
+}
+
+# ---------- NSGs ----------
 resource "oci_core_network_security_group" "nsg_internal" {
   for_each      = local.vcn_id == null ? {} : { (local.vcn_id) = true }
   compartment_id = var.network_compartment_ocid
@@ -118,13 +159,12 @@ resource "oci_core_network_security_group" "nsg_public_www" {
   display_name   = "nsg-public-www"
 }
 
-# Derive the single NSG IDs safely (null when VCN absent)
 locals {
   internal_nsg_id = local.vcn_id == null ? null : one(values(oci_core_network_security_group.nsg_internal)).id
   public_nsg_id   = local.vcn_id == null ? null : one(values(oci_core_network_security_group.nsg_public_www)).id
 }
 
-# Internal NSG rules
+# Internal NSG rules (intra-cluster any/any)
 resource "oci_core_network_security_group_security_rule" "nsg_internal_self_ingress" {
   for_each                  = local.internal_nsg_id == null ? {} : { (local.internal_nsg_id) = true }
   network_security_group_id = each.key
@@ -149,24 +189,24 @@ locals {
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
-  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : cidr => cidr }
+  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : "80-${cidr}" => cidr }
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
   source_type               = "CIDR_BLOCK"
-  source                    = each.key
+  source                    = each.value
   tcp_options {
     destination_port_range { min = 80, max = 80 }
   }
 }
 
 resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
-  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : cidr => cidr }
+  for_each                  = local.public_nsg_id == null ? {} : { for cidr in toset(local.public_cidrs) : "443-${cidr}" => cidr }
   network_security_group_id = local.public_nsg_id
   direction                 = "INGRESS"
   protocol                  = "6" # TCP
   source_type               = "CIDR_BLOCK"
-  source                    = each.key
+  source                    = each.value
   tcp_options {
     destination_port_range { min = 443, max = 443 }
   }
@@ -181,26 +221,21 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_egress_all"
   destination               = "0.0.0.0/0"
 }
 
-# ---- Free tier guardrails -----------------------------------------
+# ---------- Free tier guardrails ----------
 resource "null_resource" "free_tier_guards" {
   lifecycle {
     precondition {
       condition     = local.total_ocpus <= 4
-      error_message = "Exceeds limit: ocpus=${local.total_ocpus} (max 4)."
+      error_message = "Exceeds free tier: ocpus=${local.total_ocpus} (max 4)."
     }
     precondition {
       condition     = local.total_mem <= 24
-      error_message = "Exceeds limit: memory=${local.total_mem} GB (max 24 GB)."
+      error_message = "Exceeds free tier: memory=${local.total_mem} GB (max 24 GB)."
     }
   }
 }
 
-# ---- Derive private subnet id (null-safe) --------------------------
-locals {
-  private_subnet_id = local.vcn_id == null ? null : one(values(oci_core_subnet.private)).id
-}
-
-# ---- Instances (gated if VCN missing) ------------------------------
+# ---------- Nodes (skip entirely if no VCN) ----------
 module "nodes" {
   source = "../../modules/instance"
   count  = local.vcn_id == null ? 0 : length(local.node_names)
