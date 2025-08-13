@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.4.0"
   required_providers {
     oci = {
       source  = "oracle/oci"
@@ -6,17 +7,20 @@ terraform {
     }
     null = {
       source  = "hashicorp/null"
-      version = ">= 3.2.0"
+      version = "~> 3.2"
     }
   }
 }
 
 provider "oci" {
-  region           = var.region
-  tenancy_ocid     = var.tenancy_ocid
-  user_ocid        = var.user_ocid
-  fingerprint      = var.fingerprint
+  tenancy_ocid = var.tenancy_ocid
+  user_ocid    = var.user_ocid
+  fingerprint  = var.fingerprint
+  region       = var.region
 
-  # Use the key written by the workflow
+  # Prefer file path if supplied by CI; otherwise use in-memory PEM
   private_key_path = var.private_key_path
+  private_key      = (var.private_key_path != null && var.private_key_path != "")
+                   ? null
+                   : var.private_key_pem
 }

@@ -56,3 +56,12 @@ variable "ssh_public_key" {
   type      = string
   sensitive = true
 }
+
+# Path to OCI API key PEM on the runner (optional).
+# If provided, provider will use this path and ignore private_key_pem.
+variable "private_key_path" {
+  type        = string
+  default     = null
+  sensitive   = true
+  description = "Absolute path to OCI API key PEM file on the runner; leave null to use private_key_pem."
+}
