@@ -28,13 +28,13 @@ output "node_roles" {
   value = zipmap(local.node_names, local.node_roles)
 }
 
-# Infra summary
+# Infra summary (declassify fd, since it's not truly secret)
 output "summary" {
   value = {
     names            = local.node_names
     roles            = local.node_roles
     ad               = local.ad_name
-    fd               = var.fault_domain
+    fd               = nonsensitive(var.fault_domain)
     vcn_id           = local.vcn_id
     public_subnet_id = local.public_subnet_id
     private_subnet   = oci_core_subnet.private.id
