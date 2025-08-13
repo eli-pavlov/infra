@@ -37,6 +37,7 @@ locals {
   vcns_all         = try([for v in data.oci_core_vcns.vcns.virtual_networks : v], [])
   vcn_match        = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
   vcn_needs_create = length(local.vcn_match) == 0
+  vcn_id           = local.vcn_needs_create ? null : local.vcn_match[0].id
 }
 
 # Create VCN if missing
@@ -48,120 +49,116 @@ resource "oci_core_virtual_network" "vcn" {
   dns_label      = "newsappvcn"
 }
 
-# Resolve VCN id (new or existing)
-locals {
-  vcn_id = local.vcn_needs_create ? oci_core_virtual_network.vcn[0].id : local.vcn_match[0].id
-}
-
 # ---------- PUBLIC subnet: find-or-create ----------
 data "oci_core_subnets" "subnets" {
-  count          = local.vcn_id == null ? 0 : 1
+  count          = local.vcn_needs_create ? 0 : 1
   compartment_id = var.network_compartment_ocid
   vcn_id         = local.vcn_id
 }
 
 locals {
-  subnets_all         = local.vcn_id == null ? [] : try([for s in data.oci_core_subnets.subnets[0].subnets : s], [])
+  subnets_all         = local.vcn_needs_create ? [] : try([for s in data.oci_core_subnets.subnets[0].subnets : s], [])
   public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
-  public_needs_create = length(local.public_subnet_match) == 0
+  public_needs_create = local.vcn_needs_create || length(local.public_subnet_match) == 0
 }
 
 # If we created the VCN, also create an IGW + public route table
 resource "oci_core_internet_gateway" "igw" {
-  for_each       = local.vcn_needs_create ? { (local.vcn_id) = true } : {}
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "newsapp-igw"
   enabled        = true
 }
 
 resource "oci_core_route_table" "public_rt" {
-  for_each       = oci_core_internet_gateway.igw
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "newsapp-public-rt"
 
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_internet_gateway.igw[each.key].id
+    network_entity_id = oci_core_internet_gateway.igw[0].id
   }
 }
 
 locals {
-  public_rt_id = length(oci_core_route_table.public_rt) > 0 ? one(values(oci_core_route_table.public_rt)).id : null
+  public_rt_id = local.vcn_needs_create ? oci_core_route_table.public_rt[0].id : local.public_subnet_match[0].route_table_id
 }
 
 # Create a PUBLIC subnet if not found
 resource "oci_core_subnet" "public" {
   count                      = local.public_needs_create ? 1 : 0
   compartment_id             = var.network_compartment_ocid
-  vcn_id                     = local.vcn_id
+  vcn_id                     = local.vcn_needs_create ? oci_core_virtual_network.vcn[0].id : local.vcn_id
   cidr_block                 = var.public_subnet_cidr
   display_name               = var.subnet_display_name
   prohibit_public_ip_on_vnic = false
-  route_table_id             = local.public_rt_id
+  route_table_id             = local.vcn_needs_create ? oci_core_route_table.public_rt[0].id : local.public_subnet_match[0].route_table_id
   dns_label                  = "newsapppub"
 }
 
 locals {
   public_subnet_id = local.public_needs_create ? oci_core_subnet.public[0].id : local.public_subnet_match[0].id
+  target_vcn_id    = local.vcn_needs_create ? oci_core_virtual_network.vcn[0].id : local.vcn_id
 }
 
 # ---------- NAT + private route + PRIVATE subnet ----------
 resource "oci_core_nat_gateway" "nat" {
-  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "newsapp-nat"
 }
 
 resource "oci_core_route_table" "private_rt" {
-  for_each       = oci_core_nat_gateway.nat
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "newsapp-private-rt"
 
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_nat_gateway.nat[each.key].id
+    network_entity_id = oci_core_nat_gateway.nat[0].id
   }
 }
 
 resource "oci_core_subnet" "private" {
-  for_each                   = oci_core_route_table.private_rt
+  count                      = local.vcn_needs_create ? 1 : 0
   compartment_id             = var.network_compartment_ocid
-  vcn_id                     = each.key
+  vcn_id                     = oci_core_virtual_network.vcn[0].id
   cidr_block                 = var.private_subnet_cidr
   display_name               = "newsapp-private-1"
   prohibit_public_ip_on_vnic = true
-  route_table_id             = oci_core_route_table.private_rt[each.key].id
+  route_table_id             = oci_core_route_table.private_rt[0].id
   dns_label                  = "newsapppriv"
 }
 
 locals {
-  private_subnet_id = local.vcn_id == null ? null : one(values(oci_core_subnet.private)).id
+  private_subnet_id = local.vcn_needs_create ? oci_core_subnet.private[0].id : local.subnets_all[1].id
 }
 
 # ---------- NSGs ----------
 resource "oci_core_network_security_group" "nsg_internal" {
-  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "nsg-k8s-internal"
 }
 
 resource "oci_core_network_security_group" "nsg_public_www" {
-  for_each       = local.vcn_id == null ? {} : { (local.vcn_id) = true }
+  count          = local.vcn_needs_create ? 1 : 0
   compartment_id = var.network_compartment_ocid
-  vcn_id         = each.key
+  vcn_id         = oci_core_virtual_network.vcn[0].id
   display_name   = "nsg-public-www"
 }
 
 locals {
-  internal_nsg_id = local.vcn_id == null ? null : one(values(oci_core_network_security_group.nsg_internal)).id
-  public_nsg_id   = local.vcn_id == null ? null : one(values(oci_core_network_security_group.nsg_public_www)).id
+  internal_nsg_id = local.vcn_needs_create ? oci_core_network_security_group.nsg_internal[0].id : null
+  public_nsg_id   = local.vcn_needs_create ? oci_core_network_security_group.nsg_public_www[0].id : null
 }
 
 # Internal NSG rules (intra-cluster any/any)
@@ -245,7 +242,7 @@ resource "null_resource" "free_tier_guards" {
 # ---------- Nodes ----------
 module "nodes" {
   source = "../../modules/instance"
-  count  = local.vcn_id == null ? 0 : length(local.node_names)
+  count  = local.instances_count
 
   name                     = local.node_names[count.index]
   hostname                 = local.node_names[count.index]
