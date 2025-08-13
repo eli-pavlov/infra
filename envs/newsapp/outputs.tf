@@ -28,7 +28,7 @@ output "node_roles" {
   value = zipmap(local.node_names, local.node_roles)
 }
 
-# Infra summary (declassify fd, since it's not truly secret)
+# Infra summary (declassify fd so the output isn't sensitive)
 output "summary" {
   value = {
     names            = local.node_names
