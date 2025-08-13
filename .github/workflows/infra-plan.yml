@@ -28,9 +28,9 @@ jobs:
           TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_region:           ${{ secrets.OCI_REGION }}
-          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}   # newsapp
-          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}    # iac
-          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}       # namespace
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
         run: terraform apply -input=false -auto-approve
 
   plan:
@@ -43,7 +43,6 @@ jobs:
       - name: Terraform version
         run: terraform -version
 
-      # Option A: auto-format repo so fmt never blocks the plan
       - name: Terraform fmt (auto-fix)
         run: terraform fmt -recursive
 
@@ -97,13 +96,16 @@ jobs:
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
 
           TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
-          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}   # existing PUBLIC subnet (node-1)
+          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
           TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
 
+          TF_VAR_vcn_cidr:                   ${{ vars.VCN_CIDR || '10.0.0.0/16' }}
+          TF_VAR_public_subnet_cidr:         ${{ vars.PUBLIC_SUBNET_CIDR || '10.0.0.0/24' }}
+          TF_VAR_private_subnet_cidr:        ${{ vars.PRIVATE_SUBNET_CIDR || '10.0.1.0/24' }}
+
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
-
         run: terraform plan -input=false -out=plan.out
 
       - name: Upload plan artifact

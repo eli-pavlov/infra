@@ -37,6 +37,6 @@ output "summary" {
     fd               = nonsensitive(var.fault_domain)
     vcn_id           = nonsensitive(local.vcn_id)
     public_subnet_id = nonsensitive(local.public_subnet_id)
-    private_subnet   = nonsensitive(oci_core_subnet.private.id)
+    private_subnet   = nonsensitive(local.private_subnet_id)
   }
 }
