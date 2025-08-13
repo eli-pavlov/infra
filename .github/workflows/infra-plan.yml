@@ -28,9 +28,9 @@ jobs:
           TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_region:           ${{ secrets.OCI_REGION }}
-          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}       # newsapp
-          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}        # iac
-          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}           # namespace
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
         run: terraform apply -input=false -auto-approve
 
   plan:
@@ -52,7 +52,7 @@ jobs:
           region    = "${{ secrets.OCI_REGION }}"
           key       = "newsapp.tfstate"
           EOF
-      
+
       - name: Write OCI API key to disk (backend auth)
         working-directory: envs/newsapp
         run: |
@@ -71,16 +71,6 @@ jobs:
           OCI_private_key_path: /home/runner/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
-      - name: Terraform Init (OCI backend)
-        working-directory: envs/newsapp
-        env:
-          OCI_TENANCY:     ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_USER:        ${{ secrets.OCI_USER_OCID }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_REGION:      ${{ secrets.OCI_REGION }}
-          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY_PEM }}
-        run: terraform init -backend-config=backend.oci.hcl
-
       - name: Terraform Validate & Plan
         working-directory: envs/newsapp
         env:
@@ -89,19 +79,15 @@ jobs:
           TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:            ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
-
           TF_VAR_region:                     ${{ secrets.OCI_REGION }}
           TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
-
           TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
-
           TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
-          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}   # existing PUBLIC subnet (node-1)
+          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
           TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
-
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
         run: |
