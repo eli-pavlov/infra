@@ -36,9 +36,9 @@ data "oci_core_vcns" "vcns" {
 locals {
   vcns_all  = try(data.oci_core_vcns.vcns.virtual_networks, [])
   vcn_match = [for v in local.vcns_all : v if v.display_name == var.vcn_display_name]
-  public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
-
+  vcn_id    = (length(local.vcn_match) == 1) ? local.vcn_match[0].id : null
 }
+
 
 resource "null_resource" "validate_vcn" {
   lifecycle {
@@ -56,10 +56,11 @@ data "oci_core_subnets" "subnets" {
 }
 
 locals {
-  subnets_all        = try(data.oci_core_subnets.subnets.subnets, [])
-  public_subnet_match = [for s in subnets_all : s if s.display_name == var.subnet_display_name]
-  public_subnet_id   = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
+  subnets_all         = try(data.oci_core_subnets.subnets.subnets, [])
+  public_subnet_match = [for s in local.subnets_all : s if s.display_name == var.subnet_display_name]
+  public_subnet_id    = (length(local.public_subnet_match) == 1) ? local.public_subnet_match[0].id : null
 }
+
 
 resource "null_resource" "validate_public_subnet" {
   lifecycle {
