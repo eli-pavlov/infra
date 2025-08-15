@@ -14,23 +14,55 @@ provider "oci" {
   fingerprint  = var.fingerprint
   region       = var.region
 
-  private_key      = var.private_key_pem  != "" ? var.private_key_pem  : null
+  private_key      = var.private_key_pem != "" ? var.private_key_pem : null
   private_key_path = var.private_key_path != "" ? var.private_key_path : null
 }
 
 # -------------------
 # Variables
 # -------------------
-variable "tenancy_ocid"         { type = string }
-variable "user_ocid"            { type = string }
-variable "fingerprint"          { type = string }
-variable "private_key_pem"      { type = string, default = "" }
-variable "private_key_path"     { type = string, default = "" }
-variable "ssh_public_key"       { type = string }
-variable "region"               { type = string }
-variable "availability_domain_number" { type = number }
-variable "fault_domain"         { type = string }
-variable "compartment_ocid"     { type = string }
+variable "tenancy_ocid" {
+  type = string
+}
+
+variable "user_ocid" {
+  type = string
+}
+
+variable "fingerprint" {
+  type = string
+}
+
+variable "private_key_pem" {
+  type    = string
+  default = ""
+}
+
+variable "private_key_path" {
+  type    = string
+  default = ""
+}
+
+variable "ssh_public_key" {
+  type = string
+}
+
+variable "region" {
+  type = string
+}
+
+variable "availability_domain_number" {
+  type = number
+}
+
+variable "fault_domain" {
+  type = string
+}
+
+variable "compartment_ocid" {
+  type = string
+}
+
 variable "network_compartment_ocid" {
   type    = string
   default = null
@@ -42,21 +74,40 @@ variable "vcn_display_name" {
   default     = "newsapp-vcn"
 }
 
-variable "public_subnet_cidr"  { type = string, default = "10.0.0.0/24" }
-variable "private_subnet_cidr" { type = string, default = "10.0.1.0/24" }
-variable "vcn_cidr"            { type = string, default = "10.0.0.0/16" }
+variable "public_subnet_cidr" {
+  type    = string
+  default = "10.0.0.0/24"
+}
 
-variable "image_ocid"          { type = string }
+variable "private_subnet_cidr" {
+  type    = string
+  default = "10.0.1.0/24"
+}
 
-# Optional JSON: [{ "cidr": "0.0.0.0/0"}, ...]
+variable "vcn_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}
+
+variable "image_ocid" {
+  type = string
+}
+
 variable "ingress_rules_json" {
   type        = string
   description = "JSON string describing allowed source CIDRs."
   default     = "[{\"cidr\":\"0.0.0.0/0\"}]"
 }
 
-variable "ocpus"     { type = number, default = 1 }
-variable "memory_gb" { type = number, default = 6 }
+variable "ocpus" {
+  type    = number
+  default = 1
+}
+
+variable "memory_gb" {
+  type    = number
+  default = 6
+}
 
 # -------------------
 # Data / Locals
@@ -65,7 +116,6 @@ data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
 }
 
-# For Service Gateway destination
 data "oci_core_services" "all" {
   filter {
     name   = "name"
@@ -75,16 +125,36 @@ data "oci_core_services" "all" {
 }
 
 locals {
-  ad_name        = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_number].name
-  public_cidrs   = [for r in try(jsondecode(var.ingress_rules_json), []) : r.cidr]
+  ad_name         = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_number].name
+  public_cidrs    = [for r in try(jsondecode(var.ingress_rules_json), []) : r.cidr]
   net_compartment = coalesce(var.network_compartment_ocid, var.compartment_ocid)
 
   # 4 nodes, all private (best-practice for k8s)
   node_config = {
-    cp      = { role = "control-plane", subnet_id = oci_core_subnet.private.id, nsg_ids = [oci_core_network_security_group.nsg_internal.id], assign_public_ip = false }
-    worker1 = { role = "worker",         subnet_id = oci_core_subnet.private.id, nsg_ids = [oci_core_network_security_group.nsg_internal.id], assign_public_ip = false }
-    worker2 = { role = "worker",         subnet_id = oci_core_subnet.private.id, nsg_ids = [oci_core_network_security_group.nsg_internal.id], assign_public_ip = false }
-    worker3 = { role = "worker",         subnet_id = oci_core_subnet.private.id, nsg_ids = [oci_core_network_security_group.nsg_internal.id], assign_public_ip = false }
+    cp = {
+      role             = "control-plane",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker1 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker2 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker3 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
   }
 }
 
@@ -150,14 +220,12 @@ resource "oci_core_route_table" "private_rt" {
   vcn_id         = oci_core_virtual_network.vcn.id
   display_name   = "newsapp-private-rt"
 
-  # Egress to internet via NAT
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
     network_entity_id = oci_core_nat_gateway.nat.id
   }
 
-  # Private access to OCI services via Service Gateway (free)
   route_rules {
     destination       = data.oci_core_services.all.services[0].cidr_block
     destination_type  = "SERVICE_CIDR_BLOCK"
@@ -165,7 +233,6 @@ resource "oci_core_route_table" "private_rt" {
   }
 }
 
-# Regional subnets (omit availability_domain)
 resource "oci_core_subnet" "public" {
   cidr_block                 = var.public_subnet_cidr
   compartment_id             = local.net_compartment

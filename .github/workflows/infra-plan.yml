@@ -99,7 +99,7 @@ jobs:
           OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
           OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
           OCI_REGION:           ${{ secrets.OCI_REGION }}
-          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem  # <-- Use the file path
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
       - name: Terraform validate
