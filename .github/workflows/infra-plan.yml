@@ -101,8 +101,15 @@ jobs:
           EOF
 
       - name: Terraform Init (OCI backend)
-        if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:    ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:  ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:       ${{ secrets.OCI_REGION }}
+          # choose ONE:
+          OCI_PRIVATE_KEY:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          # OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
       - name: Terraform validate
