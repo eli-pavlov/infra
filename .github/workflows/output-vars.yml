@@ -180,18 +180,6 @@ jobs:
                     # The following lines explicitly set environment variables for the next steps
                     echo "FILE_PATH=${OUT}" >> $GITHUB_ENV
                     echo "TS=${TS}" >> $GITHUB_ENV
-
-      - name: Optional encrypt with AES-256 (set MIGRATION_AES_PASSPHRASE secret to enable)
-        if: ${{ secrets.MIGRATION_AES_PASSPHRASE != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          openssl enc -aes-256-cbc -salt -pbkdf2 \
-            -pass pass:"${{ secrets.MIGRATION_AES_PASSPHRASE }}" \
-            -in "$FILE_PATH" -out "${FILE_PATH}.enc"
-          echo "FILE_PATH=${FILE_PATH}.enc" >> $GITHUB_ENV
-          echo "ENC_SUFFIX=.enc" >> $GITHUB_ENV
-
       - name: Upload to OCI Object Storage
         shell: bash
         run: |
