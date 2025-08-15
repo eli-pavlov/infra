@@ -28,14 +28,17 @@ jobs:
           TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_region:           ${{ secrets.OCI_REGION }}
-          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}   # newsapp
-          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}    # iac
-          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}       # namespace
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
         run: terraform apply -input=false -auto-approve
 
   plan:
     needs: [ensure_state_bucket]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -43,11 +46,30 @@ jobs:
       - name: Terraform version
         run: terraform -version
 
-      # Option A: auto-format repo so fmt never blocks the plan
       - name: Terraform fmt (auto-fix)
         run: terraform fmt -recursive
 
+      - name: Detect fork
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && \
+             [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "forked=true" >> $GITHUB_OUTPUT
+          else
+            echo "forked=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Forked PRs: run without backend/provider creds
+      - name: Init (no backend) + validate
+        if: steps.detect.outputs.forked == 'true'
+        working-directory: envs/newsapp
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      # Same-repo PRs: full remote-state plan
       - name: Write backend config (OCI Object Storage)
+        if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         run: |
           cat > backend.oci.hcl <<'EOF'
@@ -58,35 +80,36 @@ jobs:
           EOF
 
       - name: Write OCI API key to disk (backend auth)
-        working-directory: envs/newsapp
+        if: steps.detect.outputs.forked == 'false'
         run: |
           umask 077
-          cat > /home/runner/oci_api_key.pem <<'PEM'
-          ${{ secrets.OCI_PRIVATE_KEY_PEM }}
-          PEM
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
 
       - name: Terraform Init (OCI backend)
+        if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         env:
-          OCI_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_user_ocid:        ${{ secrets.OCI_USER_OCID }}
-          OCI_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
-          OCI_region:           ${{ secrets.OCI_REGION }}
-          OCI_private_key_path: /home/runner/oci_api_key.pem
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
       - name: Terraform validate
+        if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         run: terraform validate
 
       - name: Terraform plan
+        if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         env:
           TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid:                  ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
           TF_VAR_private_key_pem:            ${{ secrets.OCI_PRIVATE_KEY_PEM }}
-          TF_VAR_private_key_path:           /home/runner/oci_api_key.pem
+          TF_VAR_private_key_path:           $HOME/oci_api_key.pem
           TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
 
           TF_VAR_region:                     ${{ secrets.OCI_REGION }}
@@ -96,17 +119,14 @@ jobs:
           TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
 
-          TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
-          TF_VAR_subnet_display_name:        ${{ secrets.SUBNET_DISPLAY_NAME }}   # existing PUBLIC subnet (node-1)
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
-          TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
 
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
-
         run: terraform plan -input=false -out=plan.out
 
       - name: Upload plan artifact
+        if: steps.detect.outputs.forked == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: tf-plan
