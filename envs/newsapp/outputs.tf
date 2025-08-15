@@ -1,23 +1,7 @@
-# Lists
-output "instance_ids"  { value = [for m in module.nodes : m.id] }
-output "public_ips"    { value = [for m in module.nodes : m.public_ip] }
-output "private_ips"   { value = [for m in module.nodes : m.private_ip] }
+output "vcn_id"        { value = module.network.vcn_id }
+output "subnets"       { value = module.network.subnets }
+output "nsg_ids"       { value = module.network.nsg_ids }
 
-# Name -> values maps
-output "node_public_ips"  { value = zipmap(local.node_names, [for m in module.nodes : m.public_ip]) }
-output "node_private_ips" { value = zipmap(local.node_names, [for m in module.nodes : m.private_ip]) }
-output "node_ids"         { value = zipmap(local.node_names, [for m in module.nodes : m.id]) }
-output "node_roles"       { value = zipmap(local.node_names, local.node_roles) }
-
-# Infra summary (explicitly declassify each potentially-sensitive contributor)
-output "summary" {
-  value = {
-    names            = local.node_names
-    roles            = local.node_roles
-    ad               = nonsensitive(local.ad_name)
-    fd               = nonsensitive(var.fault_domain)
-    vcn_id           = nonsensitive(local.vcn_id)
-    public_subnet_id = nonsensitive(local.public_subnet_id)
-    private_subnet   = nonsensitive(local.private_subnet_id)
-  }
-}
+output "instance_ids"  { value = { for k, m in module.nodes : k => m.id } }
+output "public_ips"    { value = { for k, m in module.nodes : k => m.public_ip } }
+output "private_ips"   { value = { for k, m in module.nodes : k => m.private_ip } }

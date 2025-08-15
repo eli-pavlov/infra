@@ -1,2 +1,15 @@
-ocpus     = 1
-memory_gb = 6
+region                       = "eu-frankfurt-1"
+compartment_ocid             = "ocid1.compartment.oc1..xxxxx"
+network_compartment_ocid     = null          # or explicit ocid
+availability_domain_number   = 0
+fault_domain                 = "FAULT-DOMAIN-1"
+
+image_ocid                   = "ocid1.image.oc1..xxxxx"
+ssh_public_key               = "ssh-ed25519 AAAA..."
+
+ocpus                        = 1
+memory_gb                    = 6
+
+assign_public_ip             = false
+allowed_cidrs                = ["0.0.0.0/0"]
+public_ingress_ports         = [22, 80, 443]
