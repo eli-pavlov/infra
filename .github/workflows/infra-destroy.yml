@@ -45,25 +45,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Write backend config (OCI Object Storage)
-        working-directory: envs/newsapp
+      - name: Write OCI API key to disk (backend auth)
         run: |
-          cat > backend.oci.hcl <<'EOF'
-          bucket    = "${{ secrets.TF_STATE_BUCKET }}"
-          namespace = "${{ secrets.OS_NAMESPACE }}"
-          region    = "${{ secrets.OCI_REGION }}"
-          key       = "${{ secrets.TF_STATE_KEY || 'newsapp.tfstate' }}"
-          EOF
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
 
       - name: Terraform Init (OCI backend)
         working-directory: envs/newsapp
         env:
-          OCI_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_user_ocid:        ${{ secrets.OCI_USER_OCID }}
-          OCI_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
-          OCI_region:           ${{ secrets.OCI_REGION }}
-          OCI_private_key:      ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          OCI_TENANCY_OCID:   ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:      ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:    ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:         ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY:    ${{ secrets.OCI_PRIVATE_KEY_PEM }}
         run: terraform init -backend-config=backend.oci.hcl
+
 
       - name: Terraform Destroy
         working-directory: envs/newsapp
