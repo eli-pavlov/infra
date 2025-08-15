@@ -80,20 +80,29 @@ jobs:
           key       = "newsapp.tfstate"
           EOF
 
-      - name: Write OCI API key to disk
+      - name: Configure OCI Authentication
+        if: steps.detect.outputs.forked == 'false'
         run: |
-          umask 077
-          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
+          # Create .oci directory if it doesn't exist
+          mkdir -p $HOME/.oci
           
+          # Write the private key to a file with restricted permissions
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/.oci/oci_api_key.pem
+          
+          # Create the OCI config file
+          cat > $HOME/.oci/config << EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+
       - name: Terraform Init (OCI backend)
         if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
-        env:
-          OCI_TENANCY_OCID:      ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_USER_OCID:         ${{ secrets.OCI_USER_OCID }}
-          OCI_FINGERPRINT:       ${{ secrets.OCI_FINGERPRINT }}
-          OCI_REGION:            ${{ secrets.OCI_REGION }}
-          OCI_PRIVATE_KEY_PATH:  $HOME/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
       - name: Terraform validate
@@ -105,21 +114,12 @@ jobs:
         if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         env:
-          TF_VAR_tenancy_ocid:                 ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_user_ocid:                    ${{ secrets.OCI_USER_OCID }}
-          TF_VAR_fingerprint:                  ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path:             $HOME/oci_api_key.pem
           TF_VAR_ssh_public_key:               ${{ secrets.SSH_PUBLIC_KEY }}
-
-          TF_VAR_region:                       ${{ secrets.OCI_REGION }}
           TF_VAR_availability_domain_number:   ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:                 ${{ secrets.FAULT_DOMAIN }}
-
           TF_VAR_compartment_ocid:             ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:     ${{ secrets.NETWORK_COMPARTMENT_OCID }}
-
           TF_VAR_image_ocid:                   ${{ secrets.IMAGE_OCID }}
-
           TF_VAR_ocpus:                        ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                    ${{ vars.NODE_MEMORY_GB || 6 }}
         run: terraform plan -input=false -out=plan.out
