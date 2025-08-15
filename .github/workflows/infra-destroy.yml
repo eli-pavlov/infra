@@ -1,3 +1,4 @@
+# .github/workflows/infra-destroy.yml
 name: infra-destroy
 on:
   workflow_dispatch:
@@ -45,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Write backend config (OCI Object Storage)
+      - name: Write backend config
         working-directory: envs/newsapp
         run: |
           cat > backend.oci.hcl <<'EOF'
@@ -55,14 +56,19 @@ jobs:
           key       = "newsapp.tfstate"
           EOF
 
+      - name: Write OCI API key to disk
+        run: |
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
+
       - name: Terraform Init (OCI backend)
         working-directory: envs/newsapp
         env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-          OCI_USER_OCID:    ${{ secrets.OCI_USER_OCID }}
-          OCI_FINGERPRINT:  ${{ secrets.OCI_FINGERPRINT }}
-          OCI_REGION:       ${{ secrets.OCI_REGION }}
-          OCI_PRIVATE_KEY:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
         run: terraform init -backend-config=backend.oci.hcl
 
       - name: Terraform Destroy
@@ -71,18 +77,16 @@ jobs:
           TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid:                  ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_pem:            ${{ secrets.OCI_PRIVATE_KEY_PEM }}
-          TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
-
+          TF_VAR_private_key_path:           $HOME/oci_api_key.pem
           TF_VAR_region:                     ${{ secrets.OCI_REGION }}
+          TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
           TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
-
           TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
-
+          TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
-
+          TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
         run: terraform destroy -input=false -auto-approve

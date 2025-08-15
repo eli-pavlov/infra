@@ -52,8 +52,15 @@ variable "region" {
 }
 
 variable "availability_domain_number" {
-  type = number
+  type        = number
+  description = "1-based AD number (1..3)"
 }
+
+locals {
+  ad_index = var.availability_domain_number - 1
+  ad_name  = data.oci_identity_availability_domains.ads.availability_domains[local.ad_index].name
+}
+
 
 variable "fault_domain" {
   type = string
