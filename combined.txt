@@ -2,6 +2,598 @@
 # .github/workflows/infra-apply.yml
 name: infra-apply
 on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to run terraform apply'
+        required: true
+        default: 'APPLY'
+
+concurrency:
+  group: infra-apply-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: true
+
+jobs:
+  ensure_state_bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init (bootstrap)
+        working-directory: bootstrap/state-bucket
+        run: terraform init
+      - name: Ensure state bucket exists (idempotent)
+        working-directory: bootstrap/state-bucket
+        env:
+          TF_VAR_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:        ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_region:           ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
+        run: terraform apply -input=false -auto-approve
+
+  apply:
+    needs: [ensure_state_bucket]
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'APPLY')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Write backend config
+        working-directory: envs/newsapp
+        run: |
+          cat > backend.oci.hcl <<'EOF'
+          bucket    = "${{ secrets.TF_STATE_BUCKET }}"
+          namespace = "${{ secrets.OS_NAMESPACE }}"
+          region    = "${{ secrets.OCI_REGION }}"
+          key       = "newsapp.tfstate"
+          EOF
+
+      - name: Write OCI API key to disk
+        run: |
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
+
+      - name: Backend auth guard
+        run: |
+          for v in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_REGION; do
+            test -n "${!v}" || { echo "::error::$v is empty"; exit 1; }
+          done
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:    ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:  ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:       ${{ secrets.OCI_REGION }}
+
+      - name: Terraform Init (OCI backend)
+        working-directory: envs/newsapp
+        env:
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
+        run: terraform init -backend-config=backend.oci.hcl
+
+      - name: Terraform Apply
+        working-directory: envs/newsapp
+        env:
+          TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:                  ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_path:           $HOME/oci_api_key.pem
+          TF_VAR_region:                     ${{ secrets.OCI_REGION }}
+          TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
+          TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
+          TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
+          TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
+          TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
+          TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
+          TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
+          TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
+        run: terraform apply -input=false -auto-approve
+
+      - name: Capture outputs
+        working-directory: envs/newsapp
+        run: |
+          terraform output -json > tf-outputs.json
+          echo "## Provisioned outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat tf-outputs.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-outputs
+          path: envs/newsapp/tf-outputs.json
+
+// .github/workflows/infra-destroy.yml
+# .github/workflows/infra-destroy.yml
+name: infra-destroy
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DESTROY to run terraform destroy'
+        required: true
+        default: 'DESTROY'
+
+concurrency:
+  group: infra-destroy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: true
+
+jobs:
+  ensure_state_bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init (bootstrap)
+        working-directory: bootstrap/state-bucket
+        run: terraform init
+      - name: Ensure state bucket exists (idempotent)
+        working-directory: bootstrap/state-bucket
+        env:
+          TF_VAR_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:        ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_region:           ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
+        run: terraform apply -input=false -auto-approve
+
+  destroy:
+    needs: [ensure_state_bucket]
+    if: github.event.inputs.confirm == 'DESTROY'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Write backend config
+        working-directory: envs/newsapp
+        run: |
+          cat > backend.oci.hcl <<'EOF'
+          bucket    = "${{ secrets.TF_STATE_BUCKET }}"
+          namespace = "${{ secrets.OS_NAMESPACE }}"
+          region    = "${{ secrets.OCI_REGION }}"
+          key       = "newsapp.tfstate"
+          EOF
+
+      - name: Write OCI API key to disk
+        run: |
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
+
+      - name: Terraform Init (OCI backend)
+        working-directory: envs/newsapp
+        env:
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
+        run: terraform init -backend-config=backend.oci.hcl
+
+      - name: Terraform Destroy
+        working-directory: envs/newsapp
+        env:
+          TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:                  ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_path:           $HOME/oci_api_key.pem
+          TF_VAR_region:                     ${{ secrets.OCI_REGION }}
+          TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
+          TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
+          TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
+          TF_VAR_vcn_display_name:           ${{ secrets.VCN_DISPLAY_NAME }}
+          TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
+          TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
+          TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
+          TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
+        run: terraform destroy -input=false -auto-approve
+
+// .github/workflows/infra-plan.yml
+# .github/workflows/infra-plan.yml
+name: infra-plan
+on:
+  pull_request:
+    paths: ['envs/**','modules/**','bootstrap/**','.github/workflows/**']
+  workflow_dispatch: {}
+
+concurrency:
+  group: infra-plan-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: true
+
+jobs:
+  ensure_state_bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init (bootstrap)
+        working-directory: bootstrap/state-bucket
+        run: terraform init
+      - name: Ensure state bucket exists (idempotent)
+        working-directory: bootstrap/state-bucket
+        env:
+          TF_VAR_tenancy_ocid:     ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:        ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:      ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_pem:  ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_region:           ${{ secrets.OCI_REGION }}
+          TF_VAR_compartment_ocid: ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_bucket_name:      ${{ secrets.TF_STATE_BUCKET }}
+          TF_VAR_os_namespace:     ${{ secrets.OS_NAMESPACE }}
+        run: terraform apply -input=false -auto-approve
+
+  plan:
+    needs: [ensure_state_bucket]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform version + fmt
+        run: |
+          terraform -version
+          terraform fmt -recursive
+
+      - name: Write backend config (OCI Object Storage)
+        working-directory: envs/newsapp
+        run: |
+          cat > backend.oci.hcl <<'EOF'
+          bucket    = "${{ secrets.TF_STATE_BUCKET }}"
+          namespace = "${{ secrets.OS_NAMESPACE }}"
+          region    = "${{ secrets.OCI_REGION }}"
+          key       = "newsapp.tfstate"
+          EOF
+
+      - name: Write OCI API key to disk
+        run: |
+          umask 077
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > $HOME/oci_api_key.pem
+
+      - name: Backend auth guard (fail fast if missing)
+        run: |
+          for v in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_REGION; do
+            test -n "${!v}" || { echo "::error::$v is empty"; exit 1; }
+          done
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:    ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:  ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:       ${{ secrets.OCI_REGION }}
+
+      - name: Terraform Init (OCI backend)
+        working-directory: envs/newsapp
+        env:
+          OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION:           ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY_PATH: $HOME/oci_api_key.pem
+        run: terraform init -backend-config=backend.oci.hcl
+
+      - name: Terraform validate
+        working-directory: envs/newsapp
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: envs/newsapp
+        env:
+          # Provider variables
+          TF_VAR_tenancy_ocid:               ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_user_ocid:                  ${{ secrets.OCI_USER_OCID }}
+          TF_VAR_fingerprint:                ${{ secrets.OCI_FINGERPRINT }}
+          TF_VAR_private_key_path:           $HOME/oci_api_key.pem
+          TF_VAR_region:                     ${{ secrets.OCI_REGION }}
+          TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
+          TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
+          TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
+          TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
+          TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
+          TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
+          TF_VAR_ingress_rules_json:         ${{ secrets.INGRESS_RULES_JSON }}
+          TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
+          TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
+        run: terraform plan -input=false -out=plan.out
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-plan
+          path: envs/newsapp/plan.out
+
+// .github/workflows/output-vars.yml
+name: export-tf-oci-vars-to-bucket
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # Where to store in your bucket (adjust if you want a different bucket/key prefix)
+  BUCKET_NAME: ${{ secrets.TF_STATE_BUCKET }}
+  KEY_PREFIX: diagnostics/vars
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (not strictly needed, but harmless)
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI (quiet)
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet oci-cli
+
+      - name: Configure OCI CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          umask 077
+          # write key
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > "$HOME/.oci/oci_api_key.pem"
+          # write config
+          cat > "$HOME/.oci/config" <<'CFG'
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          key_file=/home/runner/.oci/oci_api_key.pem
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          CFG
+
+      - name: Build JSON (no output to logs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          OUT="/tmp/vars-${TS}.json"
+
+          # helper to JSON-escape safely using python (avoids jq dependency)
+          jescape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' ; }
+
+          # Write JSON structure
+          {
+            echo '{'
+            echo '  "meta": {'
+            echo '    "generated_at_utc": '\"$TS\"','
+            echo '    "github_repo": '\"${{ github.repository }}\"','
+            echo '    "github_run_id": '\"${{ github.run_id }}\"','
+            echo '    "github_run_attempt": '\"${{ github.run_attempt }}\"' },'
+
+            echo '  "secrets": {'
+            # FULL VALUES (since we’re storing in your private bucket), one per line
+            # If you prefer masking, tell me and I’ll change to hashes/lengths.
+            for k in \
+              AVAILABILITY_DOMAIN_NUMBER \
+              FAULT_DOMAIN \
+              COMPARTMENT_OCID \
+              EGRESS_RULES_JSON \
+              IMAGE_OCID \
+              INGRESS_RULES_JSON \
+              NETWORK_COMPARTMENT_OCID \
+              OCI_FINGERPRINT \
+              OCI_PRIVATE_KEY_PEM \
+              OCI_REGION \
+              OCI_TENANCY_OCID \
+              OCI_USER_OCID \
+              OS_NAMESPACE \
+              SSH_PUBLIC_KEY \
+              SUBNET_DISPLAY_NAME \
+              TF_STATE_BUCKET \
+              TF_STATE_KEY \
+              VCN_DISPLAY_NAME
+            do
+              # pull from secrets.* into a shell var without echoing
+              v='${{ secrets.DUMMY_PLACEHOLDER }}'
+              case "$k" in
+                AVAILABILITY_DOMAIN_NUMBER) v='${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}' ;;
+                FAULT_DOMAIN)               v='${{ secrets.FAULT_DOMAIN }}' ;;
+                COMPARTMENT_OCID)           v='${{ secrets.COMPARTMENT_OCID }}' ;;
+                EGRESS_RULES_JSON)          v='${{ secrets.EGRESS_RULES_JSON }}' ;;
+                IMAGE_OCID)                 v='${{ secrets.IMAGE_OCID }}' ;;
+                INGRESS_RULES_JSON)         v='${{ secrets.INGRESS_RULES_JSON }}' ;;
+                NETWORK_COMPARTMENT_OCID)   v='${{ secrets.NETWORK_COMPARTMENT_OCID }}' ;;
+                OCI_FINGERPRINT)            v='${{ secrets.OCI_FINGERPRINT }}' ;;
+                OCI_PRIVATE_KEY_PEM)        v='${{ secrets.OCI_PRIVATE_KEY_PEM }}' ;;
+                OCI_REGION)                 v='${{ secrets.OCI_REGION }}' ;;
+                OCI_TENANCY_OCID)           v='${{ secrets.OCI_TENANCY_OCID }}' ;;
+                OCI_USER_OCID)              v='${{ secrets.OCI_USER_OCID }}' ;;
+                OS_NAMESPACE)               v='${{ secrets.OS_NAMESPACE }}' ;;
+                SSH_PUBLIC_KEY)             v='${{ secrets.SSH_PUBLIC_KEY }}' ;;
+                SUBNET_DISPLAY_NAME)        v='${{ secrets.SUBNET_DISPLAY_NAME }}' ;;
+                TF_STATE_BUCKET)            v='${{ secrets.TF_STATE_BUCKET }}' ;;
+                TF_STATE_KEY)               v='${{ secrets.TF_STATE_KEY }}' ;;
+                VCN_DISPLAY_NAME)           v='${{ secrets.VCN_DISPLAY_NAME }}' ;;
+              esac
+              # JSON line: "KEY": "VALUE",
+              printf '    "%s": ' "$k"
+              printf %s "$v" | jescape
+              echo ','
+            done
+            # strip trailing comma safely by closing correctly:
+            echo '    "_end": "" },'
+
+            echo '  "terraform_vars_equivalents": {'
+            # handy TF_VAR mapping you can import somewhere else if needed
+            printf '    "%s": ' "TF_VAR_tenancy_ocid";               printf %s '${{ secrets.OCI_TENANCY_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_user_ocid";                  printf %s '${{ secrets.OCI_USER_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_fingerprint";                printf %s '${{ secrets.OCI_FINGERPRINT }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_private_key_pem";            printf %s '${{ secrets.OCI_PRIVATE_KEY_PEM }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_region";                     printf %s '${{ secrets.OCI_REGION }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_compartment_ocid";           printf %s '${{ secrets.COMPARTMENT_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_network_compartment_ocid";   printf %s '${{ secrets.NETWORK_COMPARTMENT_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_availability_domain_number"; printf %s '${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_fault_domain";               printf %s '${{ secrets.FAULT_DOMAIN }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_image_ocid";                 printf %s '${{ secrets.IMAGE_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_ssh_public_key";             printf %s '${{ secrets.SSH_PUBLIC_KEY }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_vcn_display_name";           printf %s '${{ secrets.VCN_DISPLAY_NAME }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_ingress_rules_json";         printf %s '${{ secrets.INGRESS_RULES_JSON }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_egress_rules_json";          printf %s '${{ secrets.EGRESS_RULES_JSON }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_state_bucket";               printf %s '${{ secrets.TF_STATE_BUCKET }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_state_key";                  printf %s '${{ secrets.TF_STATE_KEY }}' | jescape; echo ','
+            echo '    "_end": "" }'
+            echo '}'
+          } > "$OUT"
+
+          echo "JSON ready at $OUT"
+          echo "FILE_PATH=$OUT" >> $GITHUB_ENV
+          echo "TS=$TS" >> $GITHUB_ENV
+
+      - name: Optional encrypt with AES-256 (set MIGRATION_AES_PASSPHRASE secret to enable)
+        if: ${{ secrets.MIGRATION_AES_PASSPHRASE != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -pass pass:"${{ secrets.MIGRATION_AES_PASSPHRASE }}" \
+            -in "$FILE_PATH" -out "${FILE_PATH}.enc"
+          echo "FILE_PATH=${FILE_PATH}.enc" >> $GITHUB_ENV
+          echo "ENC_SUFFIX=.enc" >> $GITHUB_ENV
+
+      - name: Upload to OCI Object Storage
+        shell: bash
+        env:
+          OS_NAMESPACE: ${{ secrets.OS_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          OBJ_NAME="${KEY_PREFIX}/vars-${TS}.json${ENC_SUFFIX:-}"
+          echo "Uploading to bucket=${BUCKET_NAME}, object=${OBJ_NAME}"
+          # Put object (do not print file contents)
+          oci os object put \
+            --bucket-name "${BUCKET_NAME}" \
+            --name "${OBJ_NAME}" \
+            --file "${FILE_PATH}" \
+            --content-type "application/json" \
+            --force > /dev/null
+          echo "Uploaded: ${OBJ_NAME}"
+
+// bootstrap/state-bucket/main.tf
+# bootstrap/state-bucket/main.tf
+
+# We pass the namespace from secrets (no extra lookup)
+# vars: compartment_ocid, bucket_name, os_namespace
+
+data "oci_objectstorage_bucket_summaries" "list" {
+  compartment_id = var.compartment_ocid
+  namespace      = var.os_namespace
+}
+
+locals {
+  # Be robust: if provider returns null, treat as empty list
+  bucket_summaries       = try(data.oci_objectstorage_bucket_summaries.list.bucket_summaries, [])
+  exists_in_compartment  = length([for b in local.bucket_summaries : b.name if b.name == var.bucket_name]) > 0
+}
+
+resource "oci_objectstorage_bucket" "state" {
+  count          = local.exists_in_compartment ? 0 : 1
+  compartment_id = var.compartment_ocid
+  name           = var.bucket_name
+  namespace      = var.os_namespace
+  # (optional) prevent_destroy = true via lifecycle if you want extra safety
+}
+
+// bootstrap/state-bucket/providers.tf
+terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "oci" {
+  region       = var.region
+  tenancy_ocid = var.tenancy_ocid
+  user_ocid    = var.user_ocid
+  fingerprint  = var.fingerprint
+  private_key  = var.private_key_pem
+}
+
+// bootstrap/state-bucket/variables_secrets.tf
+variable "tenancy_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "user_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "fingerprint" {
+  type      = string
+  sensitive = true
+}
+
+variable "private_key_pem" {
+  type      = string
+  sensitive = true
+}
+
+variable "region" {
+  type      = string
+  sensitive = true
+}
+
+variable "compartment_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "bucket_name" {
+  type      = string
+  sensitive = true
+}
+
+variable "os_namespace" {
+  type      = string
+  sensitive = true
+}
+
+// bootstrap/state-bucket/versions.tf
+terraform { required_version = ">= 1.6.0" }
+
+// combined.txt
+// .github/workflows/infra-apply.yml
+# .github/workflows/infra-apply.yml
+name: infra-apply
+on:
   push:
     branches: [ main, master ]
     paths: [ 'envs/**', 'modules/**', 'bootstrap/**', '.github/workflows/**' ]
@@ -3996,6 +4588,577 @@ variable "region" {
 variable "availability_domain_number" {
   type = number
 }
+
+variable "fault_domain" {
+  type = string
+}
+
+variable "compartment_ocid" {
+  type = string
+}
+
+variable "network_compartment_ocid" {
+  type    = string
+  default = null
+}
+
+variable "vcn_display_name" {
+  type        = string
+  description = "Display name for the VCN."
+  default     = "newsapp-vcn"
+}
+
+variable "public_subnet_cidr" {
+  type    = string
+  default = "10.0.0.0/24"
+}
+
+variable "private_subnet_cidr" {
+  type    = string
+  default = "10.0.1.0/24"
+}
+
+variable "vcn_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}
+
+variable "image_ocid" {
+  type = string
+}
+
+variable "ingress_rules_json" {
+  type        = string
+  description = "JSON string describing allowed source CIDRs."
+  default     = "[{\"cidr\":\"0.0.0.0/0\"}]"
+}
+
+variable "ocpus" {
+  type    = number
+  default = 1
+}
+
+variable "memory_gb" {
+  type    = number
+  default = 6
+}
+
+# -------------------
+# Data / Locals
+# -------------------
+data "oci_identity_availability_domains" "ads" {
+  compartment_id = var.tenancy_ocid
+}
+
+data "oci_core_services" "all" {
+  filter {
+    name   = "name"
+    values = ["All .* Services In Oracle Services Network"]
+    regex  = true
+  }
+}
+
+locals {
+  ad_name         = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_number].name
+  public_cidrs    = [for r in try(jsondecode(var.ingress_rules_json), []) : r.cidr]
+  net_compartment = coalesce(var.network_compartment_ocid, var.compartment_ocid)
+
+  # 4 nodes, all private (best-practice for k8s)
+  node_config = {
+    cp = {
+      role             = "control-plane",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker1 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker2 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+    worker3 = {
+      role             = "worker",
+      subnet_id        = oci_core_subnet.private.id,
+      nsg_ids          = [oci_core_network_security_group.nsg_internal.id],
+      assign_public_ip = false
+    }
+  }
+}
+
+# --- Free tier guards (4 nodes × 1 OCPU, 6 GB each) ---
+resource "null_resource" "free_tier_guards" {
+  lifecycle {
+    precondition {
+      condition     = (length(local.node_config) * var.ocpus) <= 4
+      error_message = "Exceeds free tier: ocpus=${length(local.node_config) * var.ocpus} (max 4)."
+    }
+    precondition {
+      condition     = (length(local.node_config) * var.memory_gb) <= 24
+      error_message = "Exceeds free tier: memory=${length(local.node_config) * var.memory_gb} GB (max 24 GB)."
+    }
+  }
+}
+
+# -------------------
+# Network
+# -------------------
+resource "oci_core_virtual_network" "vcn" {
+  cidr_blocks    = [var.vcn_cidr]
+  compartment_id = local.net_compartment
+  display_name   = var.vcn_display_name
+  dns_label      = "newsappvcn"
+}
+
+resource "oci_core_internet_gateway" "igw" {
+  compartment_id = local.net_compartment
+  display_name   = "newsapp-igw"
+  enabled        = true
+  vcn_id         = oci_core_virtual_network.vcn.id
+}
+
+resource "oci_core_nat_gateway" "nat" {
+  compartment_id = local.net_compartment
+  display_name   = "newsapp-nat"
+  vcn_id         = oci_core_virtual_network.vcn.id
+}
+
+resource "oci_core_service_gateway" "sgw" {
+  compartment_id = local.net_compartment
+  vcn_id         = oci_core_virtual_network.vcn.id
+  display_name   = "newsapp-sgw"
+  services {
+    service_id = data.oci_core_services.all.services[0].id
+  }
+}
+
+resource "oci_core_route_table" "public_rt" {
+  compartment_id = local.net_compartment
+  vcn_id         = oci_core_virtual_network.vcn.id
+  display_name   = "newsapp-public-rt"
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_internet_gateway.igw.id
+  }
+}
+
+resource "oci_core_route_table" "private_rt" {
+  compartment_id = local.net_compartment
+  vcn_id         = oci_core_virtual_network.vcn.id
+  display_name   = "newsapp-private-rt"
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_nat_gateway.nat.id
+  }
+
+  route_rules {
+    destination       = data.oci_core_services.all.services[0].cidr_block
+    destination_type  = "SERVICE_CIDR_BLOCK"
+    network_entity_id = oci_core_service_gateway.sgw.id
+  }
+}
+
+resource "oci_core_subnet" "public" {
+  cidr_block                 = var.public_subnet_cidr
+  compartment_id             = local.net_compartment
+  display_name               = "newsapp-public-subnet"
+  dns_label                  = "newsapppub"
+  prohibit_public_ip_on_vnic = false
+  route_table_id             = oci_core_route_table.public_rt.id
+  vcn_id                     = oci_core_virtual_network.vcn.id
+}
+
+resource "oci_core_subnet" "private" {
+  cidr_block                 = var.private_subnet_cidr
+  compartment_id             = local.net_compartment
+  display_name               = "newsapp-private-subnet"
+  dns_label                  = "newsapppriv"
+  prohibit_public_ip_on_vnic = true
+  route_table_id             = oci_core_route_table.private_rt.id
+  vcn_id                     = oci_core_virtual_network.vcn.id
+}
+
+# NSGs
+resource "oci_core_network_security_group" "nsg_public_www" {
+  compartment_id = local.net_compartment
+  vcn_id         = oci_core_virtual_network.vcn.id
+  display_name   = "nsg-public-www"
+}
+
+resource "oci_core_network_security_group" "nsg_internal" {
+  compartment_id = local.net_compartment
+  vcn_id         = oci_core_virtual_network.vcn.id
+  display_name   = "nsg-k8s-internal"
+}
+
+# NSG rules
+resource "oci_core_network_security_group_security_rule" "nsg_internal_self_ingress" {
+  network_security_group_id = oci_core_network_security_group.nsg_internal.id
+  direction                 = "INGRESS"
+  protocol                  = "all"
+  source_type               = "NETWORK_SECURITY_GROUP"
+  source                    = oci_core_network_security_group.nsg_internal.id
+}
+
+resource "oci_core_network_security_group_security_rule" "nsg_internal_egress_all" {
+  network_security_group_id = oci_core_network_security_group.nsg_internal.id
+  direction                 = "EGRESS"
+  protocol                  = "all"
+  destination               = "0.0.0.0/0"
+}
+
+resource "oci_core_network_security_group_security_rule" "nsg_public_egress_all" {
+  network_security_group_id = oci_core_network_security_group.nsg_public_www.id
+  direction                 = "EGRESS"
+  protocol                  = "all"
+  destination               = "0.0.0.0/0"
+}
+
+# HTTP
+resource "oci_core_network_security_group_security_rule" "nsg_public_http" {
+  for_each                  = toset(local.public_cidrs)
+  network_security_group_id = oci_core_network_security_group.nsg_public_www.id
+  direction                 = "INGRESS"
+  protocol                  = "6"
+  source                    = each.value
+  tcp_options {
+    destination_port_range {
+      min = 80
+      max = 80
+    }
+  }
+}
+
+# HTTPS
+resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
+  for_each                  = toset(local.public_cidrs)
+  network_security_group_id = oci_core_network_security_group.nsg_public_www.id
+  direction                 = "INGRESS"
+  protocol                  = "6"
+  source                    = each.value
+  tcp_options {
+    destination_port_range {
+      min = 443
+      max = 443
+    }
+  }
+}
+
+# -------------------
+# Compute (4 nodes)
+# -------------------
+module "nodes" {
+  source = "../../modules/instance"
+  for_each = local.node_config
+
+  name                     = each.key
+  hostname                 = each.key
+  role                     = each.value.role
+  availability_domain_name = local.ad_name
+  fault_domain             = var.fault_domain
+
+  compartment_ocid = var.compartment_ocid
+  subnet_ocid      = each.value.subnet_id
+  image_ocid       = var.image_ocid
+  ssh_public_key   = var.ssh_public_key
+
+  assign_public_ip = each.value.assign_public_ip
+  nsg_ids          = each.value.nsg_ids
+
+  ocpus     = var.ocpus
+  memory_gb = var.memory_gb
+}
+
+// envs/newsapp/outputs.tf
+# Network
+output "vcn_id" {
+  value = oci_core_virtual_network.vcn.id
+}
+
+output "subnet_ids" {
+  value = {
+    public  = oci_core_subnet.public.id
+    private = oci_core_subnet.private.id
+  }
+}
+
+output "nsg_ids" {
+  value = {
+    public_www = oci_core_network_security_group.nsg_public_www.id
+    internal   = oci_core_network_security_group.nsg_internal.id
+  }
+}
+
+# Instances (maps keyed by node name)
+output "instance_ids" {
+  value = { for k, m in module.nodes : k => m.id }
+}
+
+output "public_ips" {
+  value = { for k, m in module.nodes : k => m.public_ip }
+}
+
+output "private_ips" {
+  value = { for k, m in module.nodes : k => m.private_ip }
+}
+
+// envs/newsapp/terraform.tfvars.example
+ocpus     = 1
+memory_gb = 6
+
+// modules/instance/main.tf
+resource "oci_core_instance" "this" {
+  availability_domain = var.availability_domain_name
+  compartment_id      = var.compartment_ocid
+  display_name        = var.name
+  shape               = "VM.Standard.A1.Flex"
+  fault_domain        = var.fault_domain
+
+  shape_config {
+    ocpus         = var.ocpus
+    memory_in_gbs = var.memory_gb
+  }
+
+  create_vnic_details {
+    subnet_id              = var.subnet_ocid
+    assign_public_ip       = var.assign_public_ip
+    hostname_label         = var.hostname
+    nsg_ids                = length(var.nsg_ids) > 0 ? var.nsg_ids : null
+    skip_source_dest_check = false
+  }
+
+  source_details {
+    source_type = "image"
+    source_id   = var.image_ocid
+  }
+
+  metadata = {
+    ssh_authorized_keys = var.ssh_public_key
+    user_data           = var.cloud_init_base64
+  }
+
+  freeform_tags = merge({ "managed-by" = "terraform", "role" = var.role }, var.tags)
+}
+
+// modules/instance/outputs.tf
+output "id"         { value = oci_core_instance.this.id }
+output "public_ip"  { value = oci_core_instance.this.public_ip }
+output "private_ip" { value = oci_core_instance.this.private_ip }
+
+// modules/instance/variables.tf
+variable "name" {
+  type        = string
+  description = "The display name for the compute instance."
+}
+
+variable "hostname" {
+  type        = string
+  description = "The hostname for the compute instance."
+}
+
+variable "role" {
+  type        = string
+  description = "The role of the instance (e.g., web-server, database)."
+}
+
+variable "availability_domain_name" {
+  type        = string
+  description = "The name of the availability domain to launch the instance in."
+}
+
+variable "fault_domain" {
+  type        = string
+  description = "The name of the fault domain to launch the instance in."
+}
+
+variable "compartment_ocid" {
+  type        = string
+  description = "The OCID of the compartment where the resources will be created."
+}
+
+variable "subnet_ocid" {
+  type        = string
+  description = "The OCID of the subnet to attach to the instance's primary VNIC."
+}
+
+variable "image_ocid" {
+  type        = string
+  description = "The OCID of the image to use for the instance."
+}
+
+variable "ssh_public_key" {
+  type        = string
+  description = "The SSH public key to be installed on the instance."
+  sensitive   = true
+}
+
+variable "assign_public_ip" {
+  type        = bool
+  description = "Whether to assign a public IP address to the instance."
+  default     = false
+}
+
+variable "nsg_ids" {
+  type        = list(string)
+  description = "A list of Network Security Group OCIDs to apply to the instance's VNIC."
+  default     = []
+}
+
+variable "ocpus" {
+  type        = number
+  description = "The number of OCPUs for the instance."
+}
+
+variable "memory_gb" {
+  type        = number
+  description = "The amount of memory in GBs for the instance."
+}
+
+variable "cloud_init_base64" {
+  type        = string
+  description = "Cloud-init script to run on instance creation, encoded in base64."
+  default     = ""
+}
+
+variable "tags" {
+  type        = map(string)
+  description = "A map of tags to apply to the instance."
+  default     = {}
+}
+
+variable "tenancy_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "user_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "fingerprint" {
+  type      = string
+  sensitive = true
+}
+
+variable "private_key_pem" {
+  type      = string
+  sensitive = true
+}
+
+variable "private_key_path" {
+  type      = string
+  sensitive = true
+}
+
+variable "region" {
+  type      = string
+  sensitive = true
+}
+
+variable "bucket_name" {
+  type      = string
+  sensitive = true
+}
+
+variable "os_namespace" {
+  type      = string
+  sensitive = true
+}
+
+variable "public_subnet_cidr" {
+  type    = string
+  default = "10.0.0.0/24"
+}
+
+variable "private_subnet_cidr" {
+  type    = string
+  default = "10.0.1.0/24"
+}
+
+variable "vcn_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}
+
+// envs/newsapp/backend.tf
+terraform {
+  backend "oci" {}
+}
+
+// envs/newsapp/main.tf
+terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.9"
+    }
+  }
+}
+
+# Provider: accept either inline PEM or path
+provider "oci" {
+  tenancy_ocid = var.tenancy_ocid
+  user_ocid    = var.user_ocid
+  fingerprint  = var.fingerprint
+  region       = var.region
+
+  private_key      = var.private_key_pem != "" ? var.private_key_pem : null
+  private_key_path = var.private_key_path != "" ? var.private_key_path : null
+}
+
+# -------------------
+# Variables
+# -------------------
+variable "tenancy_ocid" {
+  type = string
+}
+
+variable "user_ocid" {
+  type = string
+}
+
+variable "fingerprint" {
+  type = string
+}
+
+variable "private_key_pem" {
+  type    = string
+  default = ""
+}
+
+variable "private_key_path" {
+  type    = string
+  default = ""
+}
+
+variable "ssh_public_key" {
+  type = string
+}
+
+variable "region" {
+  type = string
+}
+
+variable "availability_domain_number" {
+  type        = number
+  description = "1-based AD number (1..3)"
+}
+
+locals {
+  ad_index = var.availability_domain_number - 1
+  ad_name  = data.oci_identity_availability_domains.ads.availability_domains[local.ad_index].name
+}
+
 
 variable "fault_domain" {
   type = string

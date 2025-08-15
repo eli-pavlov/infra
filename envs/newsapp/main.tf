@@ -21,59 +21,24 @@ provider "oci" {
 # -------------------
 # Variables
 # -------------------
-variable "tenancy_ocid" {
-  type = string
-}
+variable "tenancy_ocid" { type = string }
+variable "user_ocid"    { type = string }
+variable "fingerprint"  { type = string }
 
-variable "user_ocid" {
-  type = string
-}
+variable "private_key_pem"  { type = string, default = "" }
+variable "private_key_path" { type = string, default = "" }
 
-variable "fingerprint" {
-  type = string
-}
-
-variable "private_key_pem" {
-  type    = string
-  default = ""
-}
-
-variable "private_key_path" {
-  type    = string
-  default = ""
-}
-
-variable "ssh_public_key" {
-  type = string
-}
-
-variable "region" {
-  type = string
-}
+variable "ssh_public_key" { type = string }
+variable "region"         { type = string }
 
 variable "availability_domain_number" {
   type        = number
   description = "1-based AD number (1..3)"
 }
 
-locals {
-  ad_index = var.availability_domain_number - 1
-  ad_name  = data.oci_identity_availability_domains.ads.availability_domains[local.ad_index].name
-}
-
-
-variable "fault_domain" {
-  type = string
-}
-
-variable "compartment_ocid" {
-  type = string
-}
-
-variable "network_compartment_ocid" {
-  type    = string
-  default = null
-}
+variable "fault_domain"          { type = string }
+variable "compartment_ocid"      { type = string }
+variable "network_compartment_ocid" { type = string, default = null }
 
 variable "vcn_display_name" {
   type        = string
@@ -81,24 +46,11 @@ variable "vcn_display_name" {
   default     = "newsapp-vcn"
 }
 
-variable "public_subnet_cidr" {
-  type    = string
-  default = "10.0.0.0/24"
-}
+variable "public_subnet_cidr"  { type = string, default = "10.0.0.0/24" }
+variable "private_subnet_cidr" { type = string, default = "10.0.1.0/24" }
+variable "vcn_cidr"            { type = string, default = "10.0.0.0/16" }
 
-variable "private_subnet_cidr" {
-  type    = string
-  default = "10.0.1.0/24"
-}
-
-variable "vcn_cidr" {
-  type    = string
-  default = "10.0.0.0/16"
-}
-
-variable "image_ocid" {
-  type = string
-}
+variable "image_ocid" { type = string }
 
 variable "ingress_rules_json" {
   type        = string
@@ -106,18 +58,11 @@ variable "ingress_rules_json" {
   default     = "[{\"cidr\":\"0.0.0.0/0\"}]"
 }
 
-variable "ocpus" {
-  type    = number
-  default = 1
-}
-
-variable "memory_gb" {
-  type    = number
-  default = 6
-}
+variable "ocpus"     { type = number, default = 1 }
+variable "memory_gb" { type = number, default = 6 }
 
 # -------------------
-# Data / Locals
+# Data
 # -------------------
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
@@ -131,8 +76,14 @@ data "oci_core_services" "all" {
   }
 }
 
+# -------------------
+# Locals (single source of truth)
+# -------------------
 locals {
-  ad_name         = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_number].name
+  # Convert 1-based input to 0-based index
+  ad_index = var.availability_domain_number - 1
+  ad_name  = data.oci_identity_availability_domains.ads.availability_domains[local.ad_index].name
+
   public_cidrs    = [for r in try(jsondecode(var.ingress_rules_json), []) : r.cidr]
   net_compartment = coalesce(var.network_compartment_ocid, var.compartment_ocid)
 
@@ -227,12 +178,14 @@ resource "oci_core_route_table" "private_rt" {
   vcn_id         = oci_core_virtual_network.vcn.id
   display_name   = "newsapp-private-rt"
 
+  # Egress via NAT
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
     network_entity_id = oci_core_nat_gateway.nat.id
   }
 
+  # Private access to OCI services via Service Gateway
   route_rules {
     destination       = data.oci_core_services.all.services[0].cidr_block
     destination_type  = "SERVICE_CIDR_BLOCK"
@@ -240,6 +193,7 @@ resource "oci_core_route_table" "private_rt" {
   }
 }
 
+# Regional subnets
 resource "oci_core_subnet" "public" {
   cidr_block                 = var.public_subnet_cidr
   compartment_id             = local.net_compartment
@@ -330,7 +284,7 @@ resource "oci_core_network_security_group_security_rule" "nsg_public_https" {
 # Compute (4 nodes)
 # -------------------
 module "nodes" {
-  source = "../../modules/instance"
+  source   = "../../modules/instance"
   for_each = local.node_config
 
   name                     = each.key
