@@ -2,7 +2,7 @@ name: infra-plan
 on:
   pull_request:
     paths: [ 'envs/**', 'modules/**', 'bootstrap/**', '.github/workflows/**' ]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 concurrency:
   group: infra-plan-${{ github.ref }}
