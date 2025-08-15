@@ -2,7 +2,12 @@ name: infra-plan
 on:
   pull_request:
     paths: [ 'envs/**', 'modules/**', 'bootstrap/**', '.github/workflows/**' ]
-  workflow_dispatch:
+  workflow_dispatch: 
+    inputs:
+      confirm:
+        description: 'Type PLAN to run terraform plan'
+        required: false
+        default: 'PLAN'
 
 concurrency:
   group: infra-plan-${{ github.ref }}
