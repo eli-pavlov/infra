@@ -77,3 +77,66 @@ variable "tags" {
   description = "A map of tags to apply to the instance."
   default     = {}
 }
+
+# The following variables are likely in a separate `variables_secrets.tf` file.
+# They are included here for completeness of the solution.
+variable "tenancy_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "user_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "fingerprint" {
+  type      = string
+  sensitive = true
+}
+
+variable "private_key_pem" {
+  type      = string
+  sensitive = true
+}
+
+variable "private_key_path" {
+  type      = string
+  sensitive = true
+}
+
+variable "region" {
+  type      = string
+  sensitive = true
+}
+
+variable "compartment_ocid" {
+  type      = string
+  sensitive = true
+}
+
+variable "bucket_name" {
+  type      = string
+  sensitive = true
+}
+
+variable "os_namespace" {
+  type      = string
+  sensitive = true
+}
+
+# The following are from the log, with corrected syntax and sample defaults
+variable "public_subnet_cidr" {
+  type    = string
+  default = "10.0.0.0/24"
+}
+
+variable "private_subnet_cidr" {
+  type    = string
+  default = "10.0.1.0/24"
+}
+
+variable "vcn_cidr" {
+  type    = string
+  default = "10.0.0.0/16"
+}

@@ -95,7 +95,6 @@ jobs:
         if: steps.detect.outputs.forked == 'false'
         working-directory: envs/newsapp
         env:
-          # Corrected environment variable names for OCI provider
           OCI_TENANCY_OCID:     ${{ secrets.OCI_TENANCY_OCID }}
           OCI_USER_OCID:        ${{ secrets.OCI_USER_OCID }}
           OCI_FINGERPRINT:      ${{ secrets.OCI_FINGERPRINT }}
@@ -118,16 +117,12 @@ jobs:
           TF_VAR_private_key_pem:            ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_private_key_path:           $HOME/oci_api_key.pem
           TF_VAR_ssh_public_key:             ${{ secrets.SSH_PUBLIC_KEY }}
-
           TF_VAR_region:                     ${{ secrets.OCI_REGION }}
           TF_VAR_availability_domain_number: ${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}
           TF_VAR_fault_domain:               ${{ secrets.FAULT_DOMAIN }}
-
           TF_VAR_compartment_ocid:           ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid:   ${{ secrets.NETWORK_COMPARTMENT_OCID }}
-
           TF_VAR_image_ocid:                 ${{ secrets.IMAGE_OCID }}
-
           TF_VAR_ocpus:                      ${{ vars.NODE_OCPUS || 1 }}
           TF_VAR_memory_gb:                  ${{ vars.NODE_MEMORY_GB || 6 }}
         run: terraform plan -input=false -out=plan.out
