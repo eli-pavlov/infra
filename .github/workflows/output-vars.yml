@@ -69,7 +69,8 @@ jobs:
           oci os bucket get --name "${BUCKET_NAME}" >/dev/null
 
       - name: Build JSON (no output to logs)
-        # Refactored to use a more robust Python script to handle secrets and JSON.
+        # Refactored to correctly pass variables from the shell to the Python script
+        # and from the step to the next steps.
         shell: bash
         env:
           # Pass all secrets and vars as environment variables to the script
@@ -95,7 +96,7 @@ jobs:
           TF_VAR_tenancy_ocid:            ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid:               ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint:             ${{ secrets.OCI_FINGERPRINT }}
-          TF_VAR_private_key_path:        ${{ secrets.OCI_PRIVATE_KEY_PEM }}
+          TF_VAR_private_key_pem:         ${{ secrets.OCI_PRIVATE_KEY_PEM }}
           TF_VAR_region:                  ${{ secrets.OCI_REGION }}
           TF_VAR_compartment_ocid:        ${{ secrets.COMPARTMENT_OCID }}
           TF_VAR_network_compartment_ocid: ${{ secrets.NETWORK_COMPARTMENT_OCID }}
@@ -111,12 +112,13 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          TS="$(date -u +%Y%m%dT%H%M%SZ)"
-          OUT="/tmp/vars-${TS}.json"
+          # Create and export shell variables so Python can see them via os.getenv()
+          export TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          export OUT="/tmp/vars-${TS}.json"
 
-          # Python script to safely build the JSON from environment variables
+          # Use a Python script to safely build the JSON from environment variables.
           python3 -c "
-          import os, json
+          import os, json, sys
 
           meta = {
               'generated_at_utc': os.getenv('TS'),
@@ -150,7 +152,7 @@ jobs:
               'TF_VAR_tenancy_ocid': os.getenv('TF_VAR_tenancy_ocid'),
               'TF_VAR_user_ocid': os.getenv('TF_VAR_user_ocid'),
               'TF_VAR_fingerprint': os.getenv('TF_VAR_fingerprint'),
-              'TF_VAR_private_key_path': os.getenv('TF_VAR_private_key_path'),
+              'TF_VAR_private_key_pem': os.getenv('TF_VAR_private_key_pem'),
               'TF_VAR_region': os.getenv('TF_VAR_region'),
               'TF_VAR_compartment_ocid': os.getenv('TF_VAR_compartment_ocid'),
               'TF_VAR_network_compartment_ocid': os.getenv('TF_VAR_network_compartment_ocid'),
@@ -173,35 +175,35 @@ jobs:
 
           with open(os.getenv('OUT'), 'w') as f:
               json.dump(data, f, indent=2)
-
-          print(f'JSON ready at {os.getenv("OUT")}')
-          print(f'FILE_PATH={os.getenv("OUT")}')
-          print(f'TS={TS}')
                     "
+                    echo "JSON ready at ${OUT}"
+                    # The following lines explicitly set environment variables for the next steps
+                    echo "FILE_PATH=${OUT}" >> $GITHUB_ENV
+                    echo "TS=${TS}" >> $GITHUB_ENV
 
-                - name: Optional encrypt with AES-256 (set MIGRATION_AES_PASSPHRASE secret to enable)
-                  if: ${{ secrets.MIGRATION_AES_PASSPHRASE != '' }}
-                  shell: bash
-                  run: |
-                    set -euo pipefail
-                    openssl enc -aes-256-cbc -salt -pbkdf2 \
-                      -pass pass:"${{ secrets.MIGRATION_AES_PASSPHRASE }}" \
-                      -in "$FILE_PATH" -out "${FILE_PATH}.enc"
-                    echo "FILE_PATH=${FILE_PATH}.enc" >> $GITHUB_ENV
-                    echo "ENC_SUFFIX=.enc" >> $GITHUB_ENV
+      - name: Optional encrypt with AES-256 (set MIGRATION_AES_PASSPHRASE secret to enable)
+        if: ${{ secrets.MIGRATION_AES_PASSPHRASE != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -pass pass:"${{ secrets.MIGRATION_AES_PASSPHRASE }}" \
+            -in "$FILE_PATH" -out "${FILE_PATH}.enc"
+          echo "FILE_PATH=${FILE_PATH}.enc" >> $GITHUB_ENV
+          echo "ENC_SUFFIX=.enc" >> $GITHUB_ENV
 
-                - name: Upload to OCI Object Storage
-                  shell: bash
-                  run: |
-                    set -euo pipefail
-                    OBJ_NAME="${KEY_PREFIX}/vars-${TS}.json${ENC_SUFFIX:-}"
-                    CT="application/json"
-                    if [ -n "${ENC_SUFFIX:-}" ]; then CT="application/octet-stream"; fi
-                    echo "Uploading to bucket=${BUCKET_NAME}, object=${OBJ_NAME}"
-                    oci os object put \
-                      --bucket-name "${BUCKET_NAME}" \
-                      --name "${OBJ_NAME}" \
-                      --file "${FILE_PATH}" \
-                      --content-type "${CT}" \
-                      --force > /dev/null
-                    echo "Uploaded: ${OBJ_NAME}"
+      - name: Upload to OCI Object Storage
+        shell: bash
+        run: |
+          set -euo pipefail
+          OBJ_NAME="${KEY_PREFIX}/vars-${TS}.json${ENC_SUFFIX:-}"
+          CT="application/json"
+          if [ -n "${ENC_SUFFIX:-}" ]; then CT="application/octet-stream"; fi
+          echo "Uploading to bucket=${BUCKET_NAME}, object=${OBJ_NAME}"
+          oci os object put \
+            --bucket-name "${BUCKET_NAME}" \
+            --name "${OBJ_NAME}" \
+            --file "${FILE_PATH}" \
+            --content-type "${CT}" \
+            --force > /dev/null
+          echo "Uploaded: ${OBJ_NAME}"
