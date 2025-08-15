@@ -1,5 +1,5 @@
 # .github/workflows/export-tf-oci-vars-to-bucket.yml
-name: export-tf-oci-vars-to-bucket
+name: output-vars
 on:
   workflow_dispatch: {}
 
