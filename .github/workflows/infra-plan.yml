@@ -1,6 +1,9 @@
 # .github/workflows/infra-plan.yml
 name: infra-plan
 on:
+  push:
+    branches: [ main, master ]
+    paths: ['envs/**','modules/**','bootstrap/**','.github/workflows/**']
   pull_request:
     paths: ['envs/**','modules/**','bootstrap/**','.github/workflows/**']
   workflow_dispatch: {}
