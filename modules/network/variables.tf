@@ -1,40 +1,55 @@
-variable "compartment_ocid" { type = string }
-variable "region"           { type = string }
+variable "compartment_ocid" {
+  type = string
+}
 
-# Base addressing. You can override these per env if needed.
+variable "region" {
+  type = string
+}
+
+# Base addressing for the VCN (can be overridden per env)
 variable "vcn_cidr" {
   type    = string
   default = "10.20.0.0/16"
 }
 
+# Prefix used in display names for all network resources
 variable "display_name_prefix" {
   type    = string
   default = "newsapp"
 }
 
-# Allow auto-suffixing names for uniqueness
+# When true, appends a short random suffix to resource display names
 variable "randomize_names" {
   type    = bool
   default = true
 }
 
-# Public ingress allow-list. Keep tight by default.
+# Public ingress allow-list for NSG "nsg-public-www"
+# Tighten to corporate IPs when possible (e.g., ["203.0.113.10/32"])
 variable "allowed_cidrs" {
   type    = list(string)
-  default = ["0.0.0.0/0"] # tighten to corp IP(s) if possible
+  default = ["0.0.0.0/0"]
 }
 
-# Which TCP ports to allow on the public NSG
+# TCP ports to allow from allowed_cidrs on the public NSG
 variable "public_ingress_ports" {
   type    = list(number)
   default = [80, 443]
 }
 
-# Optional explicit names (else computed)
-variable "vcn_display_name"   { type = string, default = "" }
-variable "dns_label"          { type = string, default = "newsapp" }
+# Optional explicit VCN display name; if empty, computed from prefix + suffix
+variable "vcn_display_name" {
+  type    = string
+  default = ""
+}
 
-# Tags
+# DNS label for the VCN (must be unique in tenancy/region; lowercase alnum)
+variable "dns_label" {
+  type    = string
+  default = "newsapp"
+}
+
+# Freeform tags applied to all resources created by this module
 variable "freeform_tags" {
   type    = map(string)
   default = {}
