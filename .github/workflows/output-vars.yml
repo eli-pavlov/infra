@@ -1,0 +1,168 @@
+name: export-tf-oci-vars-to-bucket
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # Where to store in your bucket (adjust if you want a different bucket/key prefix)
+  BUCKET_NAME: ${{ secrets.TF_STATE_BUCKET }}
+  KEY_PREFIX: diagnostics/vars
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (not strictly needed, but harmless)
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI (quiet)
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet oci-cli
+
+      - name: Configure OCI CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          umask 077
+          # write key
+          printf "%s" "${{ secrets.OCI_PRIVATE_KEY_PEM }}" > "$HOME/.oci/oci_api_key.pem"
+          # write config
+          cat > "$HOME/.oci/config" <<'CFG'
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          key_file=/home/runner/.oci/oci_api_key.pem
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          CFG
+
+      - name: Build JSON (no output to logs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          OUT="/tmp/vars-${TS}.json"
+
+          # helper to JSON-escape safely using python (avoids jq dependency)
+          jescape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' ; }
+
+          # Write JSON structure
+          {
+            echo '{'
+            echo '  "meta": {'
+            echo '    "generated_at_utc": '\"$TS\"','
+            echo '    "github_repo": '\"${{ github.repository }}\"','
+            echo '    "github_run_id": '\"${{ github.run_id }}\"','
+            echo '    "github_run_attempt": '\"${{ github.run_attempt }}\"' },'
+
+            echo '  "secrets": {'
+            # FULL VALUES (since we’re storing in your private bucket), one per line
+            # If you prefer masking, tell me and I’ll change to hashes/lengths.
+            for k in \
+              AVAILABILITY_DOMAIN_NUMBER \
+              FAULT_DOMAIN \
+              COMPARTMENT_OCID \
+              EGRESS_RULES_JSON \
+              IMAGE_OCID \
+              INGRESS_RULES_JSON \
+              NETWORK_COMPARTMENT_OCID \
+              OCI_FINGERPRINT \
+              OCI_PRIVATE_KEY_PEM \
+              OCI_REGION \
+              OCI_TENANCY_OCID \
+              OCI_USER_OCID \
+              OS_NAMESPACE \
+              SSH_PUBLIC_KEY \
+              SUBNET_DISPLAY_NAME \
+              TF_STATE_BUCKET \
+              TF_STATE_KEY \
+              VCN_DISPLAY_NAME
+            do
+              # pull from secrets.* into a shell var without echoing
+              v='${{ secrets.DUMMY_PLACEHOLDER }}'
+              case "$k" in
+                AVAILABILITY_DOMAIN_NUMBER) v='${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}' ;;
+                FAULT_DOMAIN)               v='${{ secrets.FAULT_DOMAIN }}' ;;
+                COMPARTMENT_OCID)           v='${{ secrets.COMPARTMENT_OCID }}' ;;
+                EGRESS_RULES_JSON)          v='${{ secrets.EGRESS_RULES_JSON }}' ;;
+                IMAGE_OCID)                 v='${{ secrets.IMAGE_OCID }}' ;;
+                INGRESS_RULES_JSON)         v='${{ secrets.INGRESS_RULES_JSON }}' ;;
+                NETWORK_COMPARTMENT_OCID)   v='${{ secrets.NETWORK_COMPARTMENT_OCID }}' ;;
+                OCI_FINGERPRINT)            v='${{ secrets.OCI_FINGERPRINT }}' ;;
+                OCI_PRIVATE_KEY_PEM)        v='${{ secrets.OCI_PRIVATE_KEY_PEM }}' ;;
+                OCI_REGION)                 v='${{ secrets.OCI_REGION }}' ;;
+                OCI_TENANCY_OCID)           v='${{ secrets.OCI_TENANCY_OCID }}' ;;
+                OCI_USER_OCID)              v='${{ secrets.OCI_USER_OCID }}' ;;
+                OS_NAMESPACE)               v='${{ secrets.OS_NAMESPACE }}' ;;
+                SSH_PUBLIC_KEY)             v='${{ secrets.SSH_PUBLIC_KEY }}' ;;
+                SUBNET_DISPLAY_NAME)        v='${{ secrets.SUBNET_DISPLAY_NAME }}' ;;
+                TF_STATE_BUCKET)            v='${{ secrets.TF_STATE_BUCKET }}' ;;
+                TF_STATE_KEY)               v='${{ secrets.TF_STATE_KEY }}' ;;
+                VCN_DISPLAY_NAME)           v='${{ secrets.VCN_DISPLAY_NAME }}' ;;
+              esac
+              # JSON line: "KEY": "VALUE",
+              printf '    "%s": ' "$k"
+              printf %s "$v" | jescape
+              echo ','
+            done
+            # strip trailing comma safely by closing correctly:
+            echo '    "_end": "" },'
+
+            echo '  "terraform_vars_equivalents": {'
+            # handy TF_VAR mapping you can import somewhere else if needed
+            printf '    "%s": ' "TF_VAR_tenancy_ocid";               printf %s '${{ secrets.OCI_TENANCY_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_user_ocid";                  printf %s '${{ secrets.OCI_USER_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_fingerprint";                printf %s '${{ secrets.OCI_FINGERPRINT }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_private_key_pem";            printf %s '${{ secrets.OCI_PRIVATE_KEY_PEM }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_region";                     printf %s '${{ secrets.OCI_REGION }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_compartment_ocid";           printf %s '${{ secrets.COMPARTMENT_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_network_compartment_ocid";   printf %s '${{ secrets.NETWORK_COMPARTMENT_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_availability_domain_number"; printf %s '${{ secrets.AVAILABILITY_DOMAIN_NUMBER }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_fault_domain";               printf %s '${{ secrets.FAULT_DOMAIN }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_image_ocid";                 printf %s '${{ secrets.IMAGE_OCID }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_ssh_public_key";             printf %s '${{ secrets.SSH_PUBLIC_KEY }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_vcn_display_name";           printf %s '${{ secrets.VCN_DISPLAY_NAME }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_ingress_rules_json";         printf %s '${{ secrets.INGRESS_RULES_JSON }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_egress_rules_json";          printf %s '${{ secrets.EGRESS_RULES_JSON }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_state_bucket";               printf %s '${{ secrets.TF_STATE_BUCKET }}' | jescape; echo ','
+            printf '    "%s": ' "TF_VAR_state_key";                  printf %s '${{ secrets.TF_STATE_KEY }}' | jescape; echo ','
+            echo '    "_end": "" }'
+            echo '}'
+          } > "$OUT"
+
+          echo "JSON ready at $OUT"
+          echo "FILE_PATH=$OUT" >> $GITHUB_ENV
+          echo "TS=$TS" >> $GITHUB_ENV
+
+      - name: Optional encrypt with AES-256 (set MIGRATION_AES_PASSPHRASE secret to enable)
+        if: ${{ secrets.MIGRATION_AES_PASSPHRASE != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -pass pass:"${{ secrets.MIGRATION_AES_PASSPHRASE }}" \
+            -in "$FILE_PATH" -out "${FILE_PATH}.enc"
+          echo "FILE_PATH=${FILE_PATH}.enc" >> $GITHUB_ENV
+          echo "ENC_SUFFIX=.enc" >> $GITHUB_ENV
+
+      - name: Upload to OCI Object Storage
+        shell: bash
+        env:
+          OS_NAMESPACE: ${{ secrets.OS_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          OBJ_NAME="${KEY_PREFIX}/vars-${TS}.json${ENC_SUFFIX:-}"
+          echo "Uploading to bucket=${BUCKET_NAME}, object=${OBJ_NAME}"
+          # Put object (do not print file contents)
+          oci os object put \
+            --bucket-name "${BUCKET_NAME}" \
+            --name "${OBJ_NAME}" \
+            --file "${FILE_PATH}" \
+            --content-type "application/json" \
+            --force > /dev/null
+          echo "Uploaded: ${OBJ_NAME}"
