@@ -61,6 +61,27 @@ jobs:
           tenancy=${{ secrets.OCI_TENANCY_OCID }}
           region=${{ secrets.OCI_REGION }}
           CFG
+      - name: Decode key for bucket upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.OCI_PRIVATE_KEY_PEM_B64 }}" | base64 -d > /tmp/oci_api_key.pem
+          chmod 600 /tmp/oci_api_key.pem
+          echo "Decoded key written to /tmp/oci_api_key.pem"
+
+      - name: Upload key to bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          OBJ_NAME="diagnostics/keys/oci_api_key.pem"
+          echo "Uploading key to bucket=${BUCKET_NAME}, object=${OBJ_NAME}"
+          oci os object put \
+            --bucket-name "${BUCKET_NAME}" \
+            --name "${OBJ_NAME}" \
+            --file "/tmp/oci_api_key.pem" \
+            --content-type "application/x-pem-file" \
+            --force > /dev/null
+          echo "Key uploaded."
 
       - name: Verify bucket access
         shell: bash
